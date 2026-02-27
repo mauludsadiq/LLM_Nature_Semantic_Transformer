@@ -1,0 +1,26 @@
+{
+  "semtrace_version": "0.0.1",
+  "universe": "QE",
+  "bits": 7,
+  "ops": [
+    {
+      "op": "START_ELEM",
+      "elem": "7/200"
+    },
+    {
+      "op": "SET_BIT",
+      "i": 2,
+      "b": 1
+    },
+    {
+      "op": "WITNESS_NEAREST",
+      "target_elem": "7/200",
+      "metric": "ABS_DIFF"
+    },
+    {
+      "op": "RETURN_SET",
+      "max_items": 20,
+      "include_witness": true
+    }
+  ]
+}
