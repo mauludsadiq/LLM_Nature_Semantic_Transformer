@@ -22,8 +22,8 @@ fn main() -> Result<()> {
     let proposer = gpt2::GPT2Proposer::new()?;
 
     // Generate trace with GPT-2
-    let query = "Find fractions similar to 7/200 but with denominator ≤ 6";
-    let trace_ops = proposer.generate_trace(query)?;
+    let query = std::env::args().nth(1).unwrap_or_else(|| "Find fractions similar to 7/200 but with denominator ≤ 6".to_string());
+    let trace_ops = proposer.generate_trace(&query)?;
     let human_trace = gpt2::interpret_trace(&trace_ops);
     
     // Display header
