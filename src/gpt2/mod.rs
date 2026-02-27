@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
 use std::process::{Command, Stdio};
-use std::io::Read;
-
 pub struct GPT2Proposer;
 
 impl GPT2Proposer {
@@ -11,26 +9,38 @@ impl GPT2Proposer {
     }
 
     pub fn generate_trace(&self, query: &str) -> Result<Vec<String>> {
-        let mut child = Command::new("python3")
-            .arg("scripts/gpt2_proposer.py")
+        let output = Command::new("python3")
+            .arg("-W")
+            .arg("ignore")
+            .arg("gpt2_proposer.py")
             .arg(query)
             .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow!("failed to spawn python: {}", e))?;
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| anyhow!("failed to run python: {}", e))?;
 
-        let mut output = String::new();
-        child.stdout.take().unwrap().read_to_string(&mut output)?;
-
-        let status = child.wait()?;
-        if !status.success() {
-            return Err(anyhow!("python proposer failed"));
+        if !output.status.success() {
+            return Err(anyhow!(
+                "python proposer failed (exit={}): {}",
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
-        let ops: Vec<String> = output
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let output = String::from_utf8_lossy(&output.stdout).to_string();
+
+        let s = output.trim();
+
+        // Accept either JSON array (preferred) or newline-delimited ops.
+        let ops: Vec<String> = if s.starts_with("[") {
+            serde_json::from_str(s)
+                .map_err(|e| anyhow!("invalid JSON trace from python: {} (stdout={})", e, s))?
+        } else {
+            s.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
 
         if ops.is_empty() {
             return Err(anyhow!("empty trace from GPT-2"));

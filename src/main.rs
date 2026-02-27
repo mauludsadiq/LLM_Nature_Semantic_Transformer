@@ -20,21 +20,10 @@ fn main() -> Result<()> {
     // Initialize GPT-2 proposer
     println!("\u{1b}[1mInitializing GPT-2 Proposer...\u{1b}[0m");
     let proposer = gpt2::GPT2Proposer::new()?;
-    
+
     // Generate trace with GPT-2
     let query = "Find fractions similar to 7/200 but with denominator ≤ 6";
-    let output = std::process::Command::new("python3")
-        .arg("-W")
-        .arg("ignore")
-        .arg("gpt2_proposer.py")
-        .output()?;
-
-    if output.stdout.is_empty() {
-        eprintln!("Python returned no output");
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-        return Err(anyhow::anyhow!("Empty GPT-2 output"));
-    }
-    let trace_ops: Vec<String> = serde_json::from_slice(&output.stdout)?;
+    let trace_ops = proposer.generate_trace(query)?;
     let human_trace = gpt2::interpret_trace(&trace_ops);
     
     // Display header
@@ -46,8 +35,8 @@ fn main() -> Result<()> {
     
     // Show proposer
     println!("\u{1b}[1mPROPOSER: GPT-2\u{1b}[0m");
-    println!("  Model: gpt2 (conceptual)");
-    println!("  Device: CPU");
+    println!("  Model: gpt2 (HuggingFace transformers)");
+    println!("  Device: MPS (via Python)");
     println!("  Generated trace:");
     for op in &trace_ops {
         println!("    └─ {}", op);
