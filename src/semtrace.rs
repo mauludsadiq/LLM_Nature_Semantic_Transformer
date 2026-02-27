@@ -14,10 +14,14 @@ pub struct Trace {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="op")]
 pub enum Op {
-    START_ELEM { elem: String },
-    SET_BIT { i: u8, b: u8 },
-    WITNESS_NEAREST { target_elem: String, metric: String },
-    RETURN_SET { max_items: usize, include_witness: bool },
+    #[serde(rename="START_ELEM")]
+    StartElem { elem: String },
+    #[serde(rename="SET_BIT")]
+    SetBit { i: u8, b: u8 },
+    #[serde(rename="WITNESS_NEAREST")]
+    WitnessNearest { target_elem: String, metric: String },
+    #[serde(rename="RETURN_SET")]
+    ReturnSet { max_items: usize, include_witness: bool },
 }
 
 pub fn read_trace_json(path: &Path) -> anyhow::Result<Trace> {
@@ -34,10 +38,10 @@ pub fn demo_trace() -> Trace {
         universe: "QE".to_string(),
         bits: 7,
         ops: vec![
-            Op::START_ELEM { elem: "7/200".to_string() },
-            Op::SET_BIT { i: 2, b: 1 },
-            Op::WITNESS_NEAREST { target_elem: "7/200".to_string(), metric: "ABS_DIFF".to_string() },
-            Op::RETURN_SET { max_items: 20, include_witness: true },
+            Op::StartElem { elem: "7/200".to_string() },
+            Op::SetBit { i: 2, b: 1 },
+            Op::WitnessNearest { target_elem: "7/200".to_string(), metric: "ABS_DIFF".to_string() },
+            Op::ReturnSet { max_items: 20, include_witness: true },
         ],
     }
 }

@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
 struct StepPre {
     set_digest: Option<String>,
     count: usize,
@@ -22,6 +23,7 @@ struct StepPost {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
 struct StepRec {
     step: usize,
     op: String,

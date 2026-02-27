@@ -9,10 +9,6 @@ pub fn sha256_bytes(data: &[u8]) -> [u8; 32] {
     b
 }
 
-pub fn sha256_hex(data: &[u8]) -> String {
-    hex::encode(sha256_bytes(data))
-}
-
 /// Merkle root over leaves that are already 32-byte hashes.
 /// If leaves are empty, returns sha256("") (defined root).
 pub fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {

@@ -4,7 +4,7 @@ use crate::semtrace::{sig7, bit_legend, Constraint, Op, Trace};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use time::OffsetDateTime;
 
 #[derive(Clone, Debug, Serialize)]
@@ -150,7 +150,7 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         };
 
         let (op_name, args_json, post_state_digest): (String, serde_json::Value, [u8; 32]) = match op {
-            Op::START_ELEM { elem } => {
+            Op::StartElem { elem } => {
                 let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac: {}", elem))?;
                 // v0 semantics: START_ELEM grounds the target but does not constrain the set.
                 // Constraints are applied by subsequent ops (e.g. SET_BIT).
@@ -160,14 +160,14 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                 state.witness = Some(f);
                 ("START_ELEM".to_string(), serde_json::json!({"elem": elem}), state.set_digest)
             }
-            Op::SET_BIT { i, b } => {
+            Op::SetBit { i, b } => {
                 state.cst = state.cst.set_bit(*i, *b);
                 state.set = filter_qe(&state.qe, state.cst);
                 if state.set.is_empty() { return Err(anyhow!("ERROR_EMPTY_SET")); }
                 state.set_digest = canonical_set_digest(&state.set);
                 ("SET_BIT".to_string(), serde_json::json!({"i": i, "b": b}), state.set_digest)
             }
-            Op::WITNESS_NEAREST { target_elem, metric } => {
+            Op::WitnessNearest { target_elem, metric } => {
                 if metric != "ABS_DIFF" { return Err(anyhow!("unsupported metric")); }
                 let target = parse_frac(target_elem).ok_or_else(|| anyhow!("bad target frac"))?;
                 let w = witness_nearest(&state.set, &target).ok_or_else(|| anyhow!("ERROR_EMPTY_SET"))?;
@@ -175,7 +175,7 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                 // witness op doesn't change set; use set_digest as post digest
                 ("WITNESS_NEAREST".to_string(), serde_json::json!({"target_elem": target_elem, "metric": metric}), state.set_digest)
             }
-            Op::RETURN_SET { max_items, include_witness } => {
+            Op::ReturnSet { max_items, include_witness } => {
                 let _ = (max_items, include_witness);
                 ("RETURN_SET".to_string(), serde_json::json!({"max_items": max_items, "include_witness": include_witness}), state.set_digest)
             }
