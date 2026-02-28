@@ -472,13 +472,65 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         constraint: serde_json::Value,
         sample: Vec<String>,
     }
-    let sample_set: Vec<Frac> = if let Some(t) = state.witness { let mut v = state.set.clone(); v.sort_by(|a,b| { let da = distance_num_den(&t,a); let db = distance_num_den(&t,b); if dist_lt(da,db) { std::cmp::Ordering::Less } else if dist_lt(db,da) { std::cmp::Ordering::Greater } else { canonical_cmp(a,b) } }); v } else { state.set.clone() }; let sample: Vec<String> = sample_set.iter().take(20).map(frac_to_string).collect();
+
+    // Honor RETURN_SET parameters for presentation.
+    // v0 semantics: RETURN_SET does not change the state; it only controls presentation.
+    let mut return_max_items: usize = 20;
+    let mut return_include_witness: bool = true;
+    for op in exec_ops.iter() {
+        if let Op::ReturnSet { max_items, include_witness } = op {
+            return_max_items = (*max_items).min(200); // hard cap for safety
+            return_include_witness = *include_witness;
+        }
+    }
+
+    // Sample ordering: nearest to witness (if present), then canonical tie-break.
+    let sample_set: Vec<Frac> = if let Some(t) = state.witness {
+        let mut v = state.set.clone();
+        v.sort_by(|a, b| {
+            let da = distance_num_den(&t, a);
+            let db = distance_num_den(&t, b);
+            if dist_lt(da, db) {
+                std::cmp::Ordering::Less
+            } else if dist_lt(db, da) {
+                std::cmp::Ordering::Greater
+            } else {
+                canonical_cmp(a, b)
+            }
+        });
+        v
+    } else {
+        let mut v = state.set.clone();
+        v.sort_by(canonical_cmp);
+        v
+    };
+
+    // Build sample list with optional witness pinned first.
+    let mut sample: Vec<String> = Vec::new();
+    if return_include_witness {
+        if let Some(w) = state.witness {
+            sample.push(frac_to_string(&w));
+        }
+    }
+    for f in sample_set.iter() {
+        let s = frac_to_string(f);
+        if sample.first().map(|x| x == &s).unwrap_or(false) {
+            continue;
+        }
+        sample.push(s);
+        if sample.len() >= return_max_items {
+            break;
+        }
+    }
+    if sample.len() > return_max_items {
+        sample.truncate(return_max_items);
+    }
     let result = ResultOut {
         verdict: "OK".to_string(),
         chain_hash: hex32(chain),
         count: state.set.len(),
         witness: state.witness.map(|f| frac_to_string(&f)),
-        bit_legend: bit_legend().iter().map(|s| s.to_string()).collect(),
+        bit_legend: (if trace.universe == "GE" { crate::semtrace::bit_legend_geom() } else { bit_legend() }).iter().map(|s| s.to_string()).collect(),
         constraint: serde_json::json!({"mask": state.cst.mask, "value": state.cst.value}),
         sample,
     };
@@ -511,11 +563,22 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         tests: serde_json::Value,
         chain_hash: String,
     }
-    // domain digest: hash of merkle root of full QE set
-    let qe_digest = canonical_set_digest(&state.qe);
-    let domain = serde_json::json!({"qe_merkle_root": hex32(qe_digest), "qe_size": state.qe.len()});
-    // tests hash: hash of predicate legend bytes (placeholder v0)
-    let tests = serde_json::json!({"predicate_legend": bit_legend(), "bits": 7});
+    // domain digest: universe-specific merkle root (v0)
+    let domain = if trace.universe == "GE" {
+        let mut v = ge_as_fracs(&ge_state);
+        v.sort_by(canonical_cmp);
+        let ge_digest = canonical_set_digest(&v);
+        serde_json::json!({"ge_merkle_root": hex32(ge_digest), "ge_size": v.len(), "ge_bound": 20})
+    } else {
+        let qe_digest = canonical_set_digest(&state.qe);
+        serde_json::json!({"qe_merkle_root": hex32(qe_digest), "qe_size": state.qe.len()})
+    };
+
+    // tests hash: predicate legend (v0 placeholder)
+    let tests = serde_json::json!({
+        "predicate_legend": (if trace.universe == "GE" { crate::semtrace::bit_legend_geom() } else { bit_legend() }),
+        "bits": 7
+    });
     let dig = Digests {
         domain,
         tests,
