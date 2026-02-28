@@ -183,15 +183,30 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
             match op {
                 Op::StartElem { .. } => {
                     cst = Constraint::empty();
-                    cur_set = if trace.universe == "GE" { ge_as_fracs(&ge_state) } else { state.qe.clone() };
+                    cur_set = if trace.universe == "GE" {
+                        let mut v = ge_as_fracs(&ge_state);
+                        v.sort_by(canonical_cmp);
+                        v
+                    } else {
+                        let mut v = state.qe.clone();
+                        v.sort_by(canonical_cmp);
+                        v
+                    };
                     exec_ops.push(op.clone());
                 }
                 Op::SetBit { i, b } => {
                     let next_cst = cst.set_bit(*i, *b);
                     let next_set = if trace.universe == "GE" {
-                        filter_ge(&ge_state, next_cst).into_iter().map(|t| Frac { num: t.a, den: t.c }).collect()
+                        let mut v: Vec<Frac> = filter_ge(&ge_state, next_cst)
+                            .into_iter()
+                            .map(|t| Frac { num: t.a, den: t.c })
+                            .collect();
+                        v.sort_by(canonical_cmp);
+                        v
                     } else {
-                        filter_qe(&state.qe, next_cst)
+                        let mut v = filter_qe(&state.qe, next_cst);
+                        v.sort_by(canonical_cmp);
+                        v
                     };
                     if !cur_set.is_empty() && next_set == cur_set {
                         let bit_name = legend.get(*i as usize).copied().unwrap_or("?");
@@ -275,35 +290,36 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                         state.set_digest,
                     )
                 }
-                Op::WitnessNearest {
-                    target_elem,
-                    metric,
-                } => {
-                    if metric != "ABS_DIFF" {
-                        return Err(anyhow!("unsupported metric"));
-                    }
-                    let target = if target_elem.contains(",") {
-                        let parts: Vec<&str> = target_elem.split(",").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-                        if parts.len() != 3 { return Err(anyhow!("bad tri target: {}", target_elem)); }
-                        let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
-                        let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
-                        let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
-                        let _ = crate::geom::Tri::new(a,b,c).ok_or_else(|| anyhow!("bad tri target: {}", target_elem))?;
-                        Frac { num: a, den: c }
-                    } else {
-                        parse_frac(target_elem).ok_or_else(|| anyhow!("bad target frac"))?
-                    };
-                    let w = witness_nearest(&state.set, &target)
-                        .ok_or_else(|| anyhow!("ERROR_EMPTY_SET"))?;
-                    state.witness = Some(w);
-                    // witness op doesn't change set; use set_digest as post digest
-                    (
-                        "WITNESS_NEAREST".to_string(),
-                        serde_json::json!({"target_elem": target_elem, "metric": metric}),
-                        state.set_digest,
-                    )
-                }
-                Op::ReturnSet {
+                Op::WitnessNearest { target_elem, metric } => {
+                      if metric.as_str() != "ABS_DIFF" {
+                          return Err(anyhow!("unsupported metric: {}", metric));
+                      }
+                      let t: Frac = if trace.universe == "GE" || target_elem.contains(",") {
+                          let parts: Vec<&str> = target_elem
+                              .split(",")
+                              .map(|s| s.trim())
+                              .filter(|s| !s.is_empty())
+                              .collect();
+                          if parts.len() != 3 {
+                              return Err(anyhow!("bad tri target: {}", target_elem));
+                          }
+                          let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                          let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                          let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                          let _ = crate::geom::Tri::new(a, b, c).ok_or_else(|| anyhow!("bad tri target: {}", target_elem))?;
+                          Frac { num: a, den: c }
+                      } else {
+                          parse_frac(target_elem).ok_or_else(|| anyhow!("bad frac target: {}", target_elem))?
+                      };
+                      let w = witness_nearest(&state.set, &t).ok_or_else(|| anyhow!("ERROR_EMPTY_SET"))?;
+                      state.witness = Some(w);
+                      (
+                          "WITNESS_NEAREST".to_string(),
+                          serde_json::json!({"target_elem": target_elem, "metric": metric}),
+                          state.set_digest,
+                      )
+                  }
+                  Op::ReturnSet {
                     max_items,
                     include_witness,
                 } => {
@@ -323,10 +339,43 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         // narrative line (what changed)
         match op {
             Op::StartElem { elem } => {
-                narrative.push(format!(
-                    "  {}. START_ELEM elem={}  (set := {}; count {} → {})",
-                    k, elem, set_name, pre.count, post.count
-                ));
+                if trace.universe == "GE" {
+                    // elem is "a,b,c"; show both the triangle and its projection f=a/c.
+                    let parts = elem
+                        .split(",")
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
+                    let f_str = if parts.len() == 3 {
+                        let a = parts[0].parse::<i32>().ok();
+                        let c = parts[2].parse::<i32>().ok();
+                        match (a, c) {
+                            (Some(a), Some(c)) if c != 0 => format!("{}/{}", a, c),
+                            _ => "?".to_string(),
+                        }
+                    } else {
+                        "?".to_string()
+                    };
+                    narrative.push(format!(
+                        "  {}. START_ELEM elem={}  (tri := ({}) ; f := {} ; set := {}[build_ge(20)] ; count {} → {})",
+                        k,
+                        elem,
+                        elem,
+                        f_str,
+                        set_name,
+                        pre.count,
+                        post.count
+                    ));
+                } else {
+                    narrative.push(format!(
+                        "  {}. START_ELEM elem={}  (set := {}; count {} → {})",
+                        k,
+                        elem,
+                        set_name,
+                        pre.count,
+                        post.count
+                    ));
+                }
             }
             Op::SetBit { i, b } => {
                 let bit_name = legend.get(*i as usize).copied().unwrap_or("?");
@@ -341,18 +390,42 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                     k, i, bit_name, b, removed, pct, pre.count, post.count
                 ));
             }
-            Op::WitnessNearest {
-                target_elem,
-                metric,
-            } => {
-                narrative.push(format!(
-                    "  {}. WITNESS_NEAREST target={} metric={}  (witness := {}{})",
-                    k,
-                    target_elem,
-                    metric,
-                    post.witness.clone().unwrap_or_else(|| "?".to_string()),
-                    if trace.universe == "GE" { " [f=a/c projection]" } else { "" }
-                ));
+            Op::WitnessNearest { target_elem, metric } => {
+                if trace.universe == "GE" {
+                    // show target triangle and its f=a/c projection explicitly
+                    let parts = target_elem
+                        .split(",")
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
+                    let f_str = if parts.len() == 3 {
+                        let a = parts[0].parse::<i32>().ok();
+                        let c = parts[2].parse::<i32>().ok();
+                        match (a, c) {
+                            (Some(a), Some(c)) if c != 0 => format!("{}/{}", a, c),
+                            _ => "?".to_string(),
+                        }
+                    } else {
+                        "?".to_string()
+                    };
+                    narrative.push(format!(
+                        "  {}. WITNESS_NEAREST target={}  (tri := ({}) ; f := {} ; metric={} ; witness := {} [on f only])",
+                        k,
+                        target_elem,
+                        target_elem,
+                        f_str,
+                        metric,
+                        post.witness.clone().unwrap_or_else(|| "?".to_string())
+                    ));
+                } else {
+                    narrative.push(format!(
+                        "  {}. WITNESS_NEAREST target={} metric={}  (witness := {})",
+                        k,
+                        target_elem,
+                        metric,
+                        post.witness.clone().unwrap_or_else(|| "?".to_string())
+                    ));
+                }
             }
             Op::ReturnSet {
                 max_items,
