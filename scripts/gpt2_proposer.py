@@ -42,65 +42,103 @@ model = model.to(device)
 model.eval()
 
 # ---- Grammar (v0) ----
-# Grammar-defined decoding: constrain generation to the language of valid traces.
-# v0 trace language supports: LOAD <frac>; zero+ MASK_BIT bit=<i> val=<0/1>; WITNESS_NEAREST target=<frac>; RETURN_SET.
-# IMPORTANT: we still constrain decoding to a single, query-derived candidate (deterministic), but the candidate now reflects recognized constraints.
+# Deterministic, grammar-defined decoding: constrain GPT-2 to emit EXACTLY ONE
+# candidate trace string derived from the query.
+#
+# v0 supported trace languages:
+#   QE: LOAD <frac>; zero+ MASK_BIT bit=<i> val=<0/1>; WITNESS_NEAREST target=<frac>; RETURN_SET
+#   GE: START_ELEM <a,b,c>; zero+ SET_BIT i=<i> b=<0/1>; WITNESS_NEAREST target_elem=<a,b,c> metric=ABS_DIFF; RETURN_SET max_items=<n> include_witness=<bool>
 import re
-
-m = re.search(r"(-?\d+)\s*/\s*(-?\d+)", query)
-if m:
-    frac = f"{m.group(1)}/{m.group(2)}"
-else:
-    frac = "7/200"  # fallback if no fraction found
 
 q = query.lower()
 
-# Bit legend (QE v0, matches src/semtrace.rs bit_legend):
-# 0: positive
-# 1: integer
-# 2: den<=6
-# 3: num_even
-# 4: den_mod3
-# 5: proper
-# 6: num_abs<=5
+# Detect GE intent.
+is_ge = ("in ge" in q) or ("universe\":\"ge\"" in q) or ("triangle" in q) or (re.search(r"\b\d+\s*,\s*\d+\s*,\s*\d+\b", query) is not None)
 
-bits = set()
+# Extract triangle if present.
+mt = re.search(r"\b(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\b", query)
+tri = None
+if mt:
+    tri = f"{mt.group(1)},{mt.group(2)},{mt.group(3)}"
 
-# den<=6
-if ("denominator" in q or "den<=" in q or "den <= " in q or "den≤" in q) and ("6" in q):
-    bits.add(2)
-if "den<=6" in q or "den ≤ 6" in query or "den≤6" in q or "<= 6" in q or "≤ 6" in query:
-    bits.add(2)
+# Extract fraction if present.
+mf = re.search(r"(-?\d+)\s*/\s*(-?\d+)", query)
+if mf:
+    frac = f"{mf.group(1)}/{mf.group(2)}"
+else:
+    frac = "7/200"  # fallback if no fraction found
 
-# integer
-if "integer" in q:
-    bits.add(1)
+# Parse RETURN_SET presentation hints (deterministic, best-effort).
+max_items = 20
+mm = re.search(r"\b(return\s+up\s+to|up\s+to|max[_ ]items)\s+(\d+)\b", q)
+if mm:
+    try:
+        max_items = int(mm.group(2))
+    except Exception:
+        max_items = 20
+max_items = max(1, min(max_items, 200))
 
-# positive
-if "positive" in q:
-    bits.add(0)
+include_witness = ("include witness" in q) or ("include_witness" in q)
 
-# proper
-if "proper" in q:
-    bits.add(5)
+if is_ge:
+    # GE bit legend (matches src/semtrace.rs bit_legend_geom):
+    # 0: perim<=20
+    # 1: isosceles
+    # 2: equilateral
+    # 3: primitive
+    # 4: right
+    # 5: acute
+    # 6: obtuse
+    bits = []
 
-# even
-if "even" in q or "num_even" in q:
-    bits.add(3)
+    if ("perimeter" in q or "perim" in q) and ("<= 20" in q or "≤ 20" in query or "perim<=20" in q):
+        bits.append((0, 1))
+    if "primitive" in q:
+        bits.append((3, 1))
+    if "right" in q or "right-angled" in q or "right angled" in q:
+        bits.append((4, 1))
 
-# den_mod3
-if "den_mod3" in q or "den mod 3" in q or "den%3" in q or "den % 3" in q:
-    bits.add(4)
+    if tri is None:
+        tri = "5,12,13"  # deterministic fallback target
 
-# num_abs<=5
-if "num_abs<=5" in q or "num_abs ≤ 5" in query or "abs<=5" in q or "abs ≤ 5" in query:
-    bits.add(6)
+    ops = [f"START_ELEM {tri}"]
+    for (i, b) in bits:
+        ops.append(f"SET_BIT i={i} b={b}")
+    ops.append(f"WITNESS_NEAREST target_elem={tri} metric=ABS_DIFF")
+    include_witness_val = "true" if include_witness else "false"
+    ops.append(f"RETURN_SET max_items={max_items} include_witness={include_witness_val}")
+else:
+    # QE bit legend (matches src/semtrace.rs bit_legend):
+    # 0: positive
+    # 1: integer
+    # 2: den<=6
+    # 3: num_even
+    # 4: den_mod3
+    # 5: proper
+    # 6: num_abs<=5
+    bits = set()
+    if ("denominator" in q or "den<=" in q or "den <= " in q or "den≤" in q) and ("6" in q):
+        bits.add(2)
+    if "den<=6" in q or "den ≤ 6" in query or "den≤6" in q or "<= 6" in q or "≤ 6" in query:
+        bits.add(2)
+    if "integer" in q:
+        bits.add(1)
+    if "positive" in q:
+        bits.add(0)
+    if "proper" in q:
+        bits.add(5)
+    if "even" in q or "num_even" in q:
+        bits.add(3)
+    if "den_mod3" in q or "den mod 3" in q or "den%3" in q or "den % 3" in q:
+        bits.add(4)
+    if "num_abs<=5" in q or "num_abs ≤ 5" in query or "abs<=5" in q or "abs ≤ 5" in query:
+        bits.add(6)
 
-ops = [f"LOAD {frac}"]
-for i in sorted(bits):
-    ops.append(f"MASK_BIT bit={i} val=1")
-ops.append(f"WITNESS_NEAREST target={frac}")
-ops.append("RETURN_SET")
+    ops = [f"LOAD {frac}"]
+    for i in sorted(bits):
+        ops.append(f"MASK_BIT bit={i} val=1")
+    ops.append(f"WITNESS_NEAREST target={frac}")
+    ops.append("RETURN_SET")
 
 CANDIDATES = ["\n".join(ops) + "\n"]
 
