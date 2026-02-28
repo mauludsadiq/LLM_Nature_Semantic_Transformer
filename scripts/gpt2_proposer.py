@@ -138,7 +138,8 @@ else:
     for i in sorted(bits):
         ops.append(f"MASK_BIT bit={i} val=1")
     ops.append(f"WITNESS_NEAREST target={frac}")
-    ops.append("RETURN_SET")
+    include_witness_val = "true" if include_witness else "false"
+    ops.append(f"RETURN_SET max_items={max_items} include_witness={include_witness_val}")
 
 # k=2 candidates: ordering variation only (same ops, different bit-application order), then deterministic collapse to 1
 # This preserves: same query -> same chosen trace string.
