@@ -148,7 +148,9 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
     };
     fs::create_dir_all(&out_dir)?;
     // paragraph.txt is generated from the executed trace (human-readable narrowing path)
-    let legend = bit_legend();
+    let legend = if trace.universe == "GE" { crate::semtrace::bit_legend_geom() } else { bit_legend() };
+
+    let set_name = if trace.universe == "GE" { "GE" } else { "QE" };
     let mut narrative: Vec<String> = Vec::new();
     narrative.push(format!(
         "REASONING TRACE (semtrace v{})",
@@ -159,6 +161,10 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         trace.universe, trace.bits
     ));
     narrative.push(String::new());
+      if trace.universe == "GE" {
+          narrative.push("Element model: triangles (a,b,c). Execution projects each triangle to f=a/c; ABS_DIFF is computed on f only (b is ignored). Witness/sample are shown as f.".to_string());
+          narrative.push(String::new());
+      }
     narrative.push("Bit legend:".to_string());
     for (i, name) in legend.iter().enumerate() {
         narrative.push(format!("  {}: {}", i, name));
@@ -318,8 +324,8 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         match op {
             Op::StartElem { elem } => {
                 narrative.push(format!(
-                    "  {}. START_ELEM elem={}  (set := QE; count {} → {})",
-                    k, elem, pre.count, post.count
+                    "  {}. START_ELEM elem={}  (set := {}; count {} → {})",
+                    k, elem, set_name, pre.count, post.count
                 ));
             }
             Op::SetBit { i, b } => {
@@ -340,11 +346,12 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                 metric,
             } => {
                 narrative.push(format!(
-                    "  {}. WITNESS_NEAREST target={} metric={}  (witness := {})",
+                    "  {}. WITNESS_NEAREST target={} metric={}  (witness := {}{})",
                     k,
                     target_elem,
                     metric,
-                    post.witness.clone().unwrap_or_else(|| "?".to_string())
+                    post.witness.clone().unwrap_or_else(|| "?".to_string()),
+                    if trace.universe == "GE" { " [f=a/c projection]" } else { "" }
                 ));
             }
             Op::ReturnSet {

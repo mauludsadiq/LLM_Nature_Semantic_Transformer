@@ -54,6 +54,11 @@ pub fn bit_legend() -> [&'static str; 7] {
     ["positive","rat_int","den<=6","num_even","den_mod3","proper","num_abs<=5"]
 }
 
+pub fn bit_legend_geom() -> [&'static str; 7] {
+    ["perim<=20","isosceles","equilateral","primitive","right","acute","obtuse"]
+}
+
+
 /// Compute signature bits for QE predicates.
 pub fn sig7(f: &Frac) -> u8 {
     let mut bits: u8 = 0;
