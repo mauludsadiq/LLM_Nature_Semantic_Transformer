@@ -51,14 +51,14 @@ pub fn demo_trace() -> Trace {
 
 /// For v0: map bit index to predicate meaning (QE fixed).
 pub fn bit_legend() -> [&'static str; 7] {
-    ["positive","integer","den<=6","num_even","den_mod3","proper","num_abs<=5"]
+    ["positive","rat_int","den<=6","num_even","den_mod3","proper","num_abs<=5"]
 }
 
 /// Compute signature bits for QE predicates.
 pub fn sig7(f: &Frac) -> u8 {
     let mut bits: u8 = 0;
     let positive = f.num > 0;
-    let integer = f.den == 1;
+    let integer = true; // QE universe: all elems are rationals with integer num/den.
     let den_le_6 = f.den <= 6;
     let num_even = f.num % 2 == 0;
     let den_mod3 = f.den % 3 == 0;

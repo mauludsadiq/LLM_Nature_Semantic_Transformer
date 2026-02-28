@@ -361,7 +361,7 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         constraint: serde_json::Value,
         sample: Vec<String>,
     }
-    let sample: Vec<String> = state.set.iter().take(20).map(frac_to_string).collect();
+    let sample_set: Vec<Frac> = if let Some(t) = state.witness { let mut v = state.set.clone(); v.sort_by(|a,b| { let da = distance_num_den(&t,a); let db = distance_num_den(&t,b); if dist_lt(da,db) { std::cmp::Ordering::Less } else if dist_lt(db,da) { std::cmp::Ordering::Greater } else { canonical_cmp(a,b) } }); v } else { state.set.clone() }; let sample: Vec<String> = sample_set.iter().take(20).map(frac_to_string).collect();
     let result = ResultOut {
         verdict: "OK".to_string(),
         chain_hash: hex32(chain),
