@@ -160,7 +160,7 @@ cand_a = "\n".join(ops) + "\n"
 cand_b = "\n".join(ops_alt) + "\n"
 cands = [cand_a, cand_b]
 cands.sort()
-CANDIDATES = [cands[0]]
+CANDIDATES = cands
 
 prompt = (
     "You are a semantic trace generator.\n"
