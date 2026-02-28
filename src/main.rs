@@ -1,165 +1,111 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use anyhow::{anyhow, Result};
 use std::path::PathBuf;
-use std::fs;
-use anyhow::Result;
-use sha2::{Sha256, Digest};
 
+mod digest;
+mod qe;
+mod semtrace;
+mod exec;
+mod verify;
 mod gpt2;
 
-const ARTIFACT: &str = "In this system, the transformer is not the authority on truth. It is a proposer of paths through a certified semantic universe. Each proposed path is executed deterministically, producing step digests that hash the pre-state, the operation, and the post-state. A verifier then replays the entire trace and confirms that every digest matches. If any step is inconsistent, the trace is rejected. The paragraph you are reading is the artifact: it passes through the proposer, executor, and verifier without wavering, because validity is enforced by replayable proof rather than probabilistic confidence.";
+use semtrace::{Op, Trace};
 
-/// Parse a fraction string like "a/b" into (numerator, denominator)
-fn parse_fraction(frac: &str) -> Option<(i32, i32)> {
-    let parts: Vec<&str> = frac.split('/').collect();
-    if parts.len() == 2 {
-        let num = parts[0].parse::<i32>().ok()?;
-        let den = parts[1].parse::<i32>().ok()?;
-        if den != 0 {
-            return Some((num, den));
+fn parse_kv_u8(s: &str, key: &str) -> Option<u8> {
+    // matches "... key=123 ..." where separator is '='
+    for part in s.split_whitespace() {
+        if let Some(rest) = part.strip_prefix(key) {
+            if let Some(v) = rest.strip_prefix('=') {
+                return v.parse::<u8>().ok();
+            }
         }
     }
     None
 }
 
-/// Calculate absolute difference between two fractions: |a/b - c/d|
-fn fraction_abs_diff(frac1: &str, frac2: &str) -> String {
-    match (parse_fraction(frac1), parse_fraction(frac2)) {
-        (Some((n1, d1)), Some((n2, d2))) => {
-            // Calculate |n1/d1 - n2/d2| = |(n1*d2 - n2*d1)| / (d1*d2)
-            let num = (n1 * d2 - n2 * d1).abs();
-            let den = d1 * d2;
-            
-            // Simplify by dividing by GCD
-            let gcd = gcd(num, den);
-            if gcd > 1 {
-                format!("{}/{}", num / gcd, den / gcd)
-            } else {
-                format!("{}/{}", num, den)
-            }
+fn proposer_ops_to_trace(ops: &[String]) -> Result<Trace> {
+    let mut out: Vec<Op> = Vec::new();
+
+    for op in ops {
+        if let Some(elem) = op.strip_prefix("LOAD ") {
+            out.push(Op::StartElem { elem: elem.trim().to_string() });
+            continue;
         }
-        _ => "?".to_string(),
-    }
-}
 
-/// Calculate Greatest Common Divisor (Euclidean algorithm)
-fn gcd(a: i32, b: i32) -> i32 {
-    if b == 0 {
-        a.abs()
-    } else {
-        gcd(b, a % b)
-    }
-}
+        if op.starts_with("MASK_BIT") {
+            let i = parse_kv_u8(op, "bit").ok_or_else(|| anyhow!("bad MASK_BIT (missing bit=): {}", op))?;
+            let b = parse_kv_u8(op, "val").ok_or_else(|| anyhow!("bad MASK_BIT (missing val=): {}", op))?;
+            out.push(Op::SetBit { i, b });
+            continue;
+        }
 
-/// Generate a deterministic hash for a step
-fn step_digest(step_num: usize, operation: &str, fraction: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("step:{}", step_num).as_bytes());
-    hasher.update(operation.as_bytes());
-    hasher.update(fraction.as_bytes());
-    let result = hasher.finalize();
-    format!("{:x}", result)[..8].to_string() + "..."
-}
+        if let Some(target) = op.strip_prefix("WITNESS_NEAREST target=") {
+            out.push(Op::WitnessNearest {
+                target_elem: target.trim().to_string(),
+                metric: "ABS_DIFF".to_string(),
+            });
+            continue;
+        }
 
-/// Generate the chain hash from all steps
-fn chain_hash(ops: &[String], fraction: &str) -> String {
-    let mut hasher = Sha256::new();
-    for (i, op) in ops.iter().enumerate() {
-        hasher.update(format!("{}:{}:{}", i, op, fraction).as_bytes());
+        if op.trim() == "RETURN_SET" {
+            out.push(Op::ReturnSet { max_items: 20, include_witness: true });
+            continue;
+        }
+
+        return Err(anyhow!("unknown proposer op: {}", op));
     }
-    let result = hasher.finalize();
-    format!("{:x}", result)
+
+    Ok(Trace {
+        semtrace_version: "0.0.1".to_string(),
+        universe: "QE".to_string(),
+        bits: 7,
+        ops: out,
+    })
 }
 
 fn main() -> Result<()> {
-    // Generate run ID
-    let start = SystemTime::now();
-    let since_epoch = start.duration_since(UNIX_EPOCH)?;
-    let run_id = format!("20260227_{:06}Z", since_epoch.as_secs() % 1000000);
-    
-    // Create output directory
-    let out_dir = PathBuf::from("runs").join(&run_id);
-    fs::create_dir_all(&out_dir)?;
-
-    // Initialize GPT-2 proposer
-    println!("\u{1b}[1mInitializing GPT-2 Proposer...\u{1b}[0m");
-    let proposer = gpt2::GPT2Proposer::new()?;
-
-    // Generate trace with GPT-2
+    // Query
     let query = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "Find fractions similar to 7/200 but with denominator ≤ 6".to_string());
+
+    // Proposer: GPT-2 via Python bridge.
+    // NOTE: decoding is currently grammar-constrained to valid v0 traces (see scripts/gpt2_proposer.py).
+    let proposer = gpt2::GPT2Proposer::new()?;
     let trace_ops = proposer.generate_trace(&query)?;
-    let human_trace = gpt2::interpret_trace(&trace_ops);
 
-    // Display header
-    println!("\u{1b}[1m\u{1b}[36m┌──────────────────────────────────────────────────────────────────────┐\u{1b}[0m");
-    println!("\u{1b}[1m\u{1b}[36m│  GROUNDED SEMANTIC TRANSFORMER v0.1.0                                │\u{1b}[0m");
-    println!("\u{1b}[1m\u{1b}[36m│  run: {:<60}│\u{1b}[0m", run_id);
-    println!("\u{1b}[1m\u{1b}[36m└──────────────────────────────────────────────────────────────────────┘\u{1b}[0m");
     println!("");
-
-    // Show proposer
-    println!("\u{1b}[1mPROPOSER: GPT-2\u{1b}[0m");
-    println!("  Model: gpt2 (HuggingFace transformers)");
-    println!("  Device: MPS (via Python)");
-    println!("  Generated trace:");
-    for op in &trace_ops {
-        println!("    └─ {}", op);
-    }
-    println!("");
-
-    // Show query (actual per-run query)
     println!("\u{1b}[1mQUERY:\u{1b}[0m {}", query);
     println!("");
 
-    // Extract the fraction from the first LOAD operation
-    let fraction = trace_ops.iter()
-        .find(|op| op.starts_with("LOAD "))
-        .and_then(|op| op.strip_prefix("LOAD "))
-        .unwrap_or("7/200");
-
-    // Calculate distance to 1/6 (the nearest fraction with denominator ≤ 6)
-    let distance = fraction_abs_diff(fraction, "1/6");
-
-    // Generate dynamic step digests
-    let step0_digest = step_digest(0, "LOAD", fraction);
-    let step1_digest = step_digest(1, "MASK_BIT", fraction);
-    let step2_digest = step_digest(2, "WITNESS_NEAREST", fraction);
-    let final_chain_hash = chain_hash(&trace_ops, fraction);
-
-    // Execute steps (dynamic based on actual trace)
-    println!("\u{1b}[1mStep 0: LOAD {}\u{1b}[0m", fraction);
-    println!("  Signature: [T F F F F T F]");
-    println!("  Set digest: {}", step0_digest);
+    println!("\u{1b}[1mPROPOSER OPS (raw):\u{1b}[0m");
+    for op in &trace_ops {
+        println!("  {}", op);
+    }
     println!("");
 
-    println!("\u{1b}[1mStep 1: MASK_BIT (den≤6 := true)\u{1b}[0m");
-    println!("  Result set size: 142");
-    println!("  Sample: 1/6, 1/5, 1/4, 1/3, 1/2, 5/6, 7/6");
-    println!("  New set digest: {}", step1_digest);
+    // Convert proposer ops -> semtrace::Trace (real executable semantics)
+    let trace = proposer_ops_to_trace(&trace_ops)?;
+
+    // Execute (writes trace.ndjson, result.json, proof.json, paragraph.txt)
+    let out_dir: PathBuf = exec::run_trace_and_write(&trace, None)?;
+
+    // Verify (replay trace.ndjson and check digests/state)
+    let trace_path = out_dir.join("trace.ndjson");
+    let ok = verify::verify_trace_ndjson(&trace_path)?;
+
+    println!("\u{1b}[1mEXECUTOR OUTPUT:\u{1b}[0m {}", out_dir.display());
+    println!("  wrote: {}", trace_path.display());
+    println!("  wrote: {}", out_dir.join("result.json").display());
+    println!("  wrote: {}", out_dir.join("proof.json").display());
+    println!("  wrote: {}", out_dir.join("paragraph.txt").display());
     println!("");
 
-    println!("\u{1b}[1mStep 2: WITNESS_NEAREST(target={}, metric=ABS_DIFF)\u{1b}[0m", fraction);
-    println!("  Nearest: 1/6");
-    println!("  Distance: |{} - 1/6| = {}", fraction, distance);
-    println!("");
-
-    // Verification
-    println!("\u{1b}[1m\u{1b}[32mVERIFIER REPLAY\u{1b}[0m");
-    println!("  Step digests: {} → {} → {}", step0_digest, step1_digest, step2_digest);
-    println!("  Chain hash: {}", final_chain_hash);
-    println!("  Verdict: \u{1b}[1m\u{1b}[32mVALID\u{1b}[0m");
-    println!("");
-
-    // Final artifact
-    println!("\u{1b}[1mFINAL ARTIFACT (verified)\u{1b}[0m");
-    println!("{}", ARTIFACT);
-    println!("");
-    println!("Output folder: {}", out_dir.display());
-
-    // Write artifact to file
-    fs::write(out_dir.join("artifact.txt"), ARTIFACT)?;
-    fs::write(out_dir.join("trace.txt"), human_trace.join("\n"))?;
+    if ok {
+        println!("\u{1b}[1m\u{1b}[32mVERIFIER:\u{1b}[0m \u{1b}[1m\u{1b}[32mVALID (replay matched)\u{1b}[0m");
+    } else {
+        println!("\u{1b}[1m\u{1b}[31mVERIFIER:\u{1b}[0m \u{1b}[1m\u{1b}[31mINVALID (replay mismatch)\u{1b}[0m");
+        return Err(anyhow!("verify failed"));
+    }
 
     Ok(())
 }
