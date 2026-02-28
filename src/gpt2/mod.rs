@@ -189,6 +189,8 @@ fn extract_fraction_from_query(query: &str) -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
+
 pub fn interpret_trace(ops: &[String]) -> Vec<String> {
     let mut human_readable = Vec::new();
     

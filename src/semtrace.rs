@@ -24,6 +24,8 @@ pub enum Op {
     ReturnSet { max_items: usize, include_witness: bool },
 }
 
+#[allow(dead_code)]
+
 pub fn read_trace_json(path: &Path) -> anyhow::Result<Trace> {
     let txt = fs::read_to_string(path)?;
     let t: Trace = serde_json::from_str(&txt)?;
@@ -32,6 +34,7 @@ pub fn read_trace_json(path: &Path) -> anyhow::Result<Trace> {
 
 /// Deterministic v0 demo trace: start at 7/200, force den<=6=1 (bit index 2),
 /// pick nearest witness, and return a sample.
+#[allow(dead_code)]
 pub fn demo_trace() -> Trace {
     Trace {
         semtrace_version: "0.0.1".to_string(),
