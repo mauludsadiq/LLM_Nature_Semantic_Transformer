@@ -140,7 +140,27 @@ else:
     ops.append(f"WITNESS_NEAREST target={frac}")
     ops.append("RETURN_SET")
 
-CANDIDATES = ["\n".join(ops) + "\n"]
+# k=2 candidates: ordering variation only (same ops, different bit-application order), then deterministic collapse to 1
+# This preserves: same query -> same chosen trace string.
+if is_ge:
+    # ops = [START_ELEM] + SET_BIT* + [WITNESS_NEAREST, RETURN_SET]
+    # reorder only the SET_BIT lines
+    bit_lines = [ln for ln in ops if ln.startswith("SET_BIT ")]
+    tail = [ln for ln in ops if not ln.startswith("SET_BIT ") and not ln.startswith("START_ELEM ")]
+    head = [ops[0]]
+    ops_alt = head + list(reversed(bit_lines)) + tail
+else:
+    # QE: reorder only the MASK_BIT lines
+    bit_lines = [ln for ln in ops if ln.startswith("MASK_BIT ")]
+    tail = [ln for ln in ops if not ln.startswith("MASK_BIT ") and not ln.startswith("LOAD ")]
+    head = [ops[0]]
+    ops_alt = head + list(reversed(bit_lines)) + tail
+
+cand_a = "\n".join(ops) + "\n"
+cand_b = "\n".join(ops_alt) + "\n"
+cands = [cand_a, cand_b]
+cands.sort()
+CANDIDATES = [cands[0]]
 
 prompt = (
     "You are a semantic trace generator.\n"
