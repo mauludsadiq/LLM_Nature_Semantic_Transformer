@@ -261,7 +261,15 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                     // v0 semantics: START_ELEM grounds the target but does not constrain the set.
                     // Constraints are applied by subsequent ops (e.g. SET_BIT).
                     state.cst = Constraint::empty();
-                    state.set = if trace.universe == "GE" { ge_as_fracs(&ge_state) } else { state.qe.clone() };
+                    state.set = if trace.universe == "GE" {
+                        let mut v = ge_as_fracs(&ge_state);
+                        v.sort_by(canonical_cmp);
+                        v
+                    } else {
+                        let mut v = state.qe.clone();
+                        v.sort_by(canonical_cmp);
+                        v
+                    };
                     state.set_digest = canonical_set_digest(&state.set);
                     state.witness = Some(f);
                     (
@@ -273,12 +281,16 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                 Op::SetBit { i, b } => {
                     state.cst = state.cst.set_bit(*i, *b);
                     state.set = if trace.universe == "GE" {
-                        filter_ge(&ge_state, state.cst)
+                        let mut v: Vec<Frac> = filter_ge(&ge_state, state.cst)
                             .into_iter()
                             .map(|t| Frac { num: t.a, den: t.c })
-                            .collect()
+                            .collect();
+                        v.sort_by(canonical_cmp);
+                        v
                     } else {
-                        filter_qe(&state.qe, state.cst)
+                        let mut v = filter_qe(&state.qe, state.cst);
+                        v.sort_by(canonical_cmp);
+                        v
                     };
                     if state.set.is_empty() {
                         return Err(anyhow!("ERROR_EMPTY_SET"));

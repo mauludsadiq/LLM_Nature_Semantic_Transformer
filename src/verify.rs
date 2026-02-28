@@ -128,12 +128,14 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 }; 
                 cst = Constraint::empty();
                 state_set = if is_ge {
-                    let mut tris: Vec<crate::geom::Tri> = ge_state.clone();
-                    tris.sort_by(crate::geom::canonical_cmp);
-                    tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect()
-                } else {
-                    qe.clone()
-                };
+                      let mut tris: Vec<crate::geom::Tri> = ge_state.clone();
+                      tris.sort_by(crate::geom::canonical_cmp);
+                      let mut v: Vec<Frac> = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                      v.sort_by(crate::qe::canonical_cmp);
+                      v
+                  } else {
+                      qe.clone()
+                  };
                 set_digest = canonical_set_digest(&state_set);
                 witness = Some(f);
             }
@@ -144,7 +146,11 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 if is_ge {
                     let mut tris: Vec<crate::geom::Tri> = ge_state.iter().copied().filter(|t| cst.matches(crate::semtrace::sig7_geom(t))).collect();
                     tris.sort_by(crate::geom::canonical_cmp);
-                    state_set = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                    {
+                      let mut v: Vec<Frac> = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                      v.sort_by(crate::qe::canonical_cmp);
+                      state_set = v;
+                  }
                 } else {
                     state_set = filter_qe(&qe, cst);
                 }
