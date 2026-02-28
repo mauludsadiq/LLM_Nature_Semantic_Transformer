@@ -43,8 +43,8 @@ model.eval()
 
 # ---- Grammar (v0) ----
 # Grammar-defined decoding: constrain generation to the language of valid traces.
-# v0 language: LOAD <frac>; MASK_BIT bit=2 val=1; WITNESS_NEAREST target=<same frac>; RETURN_SET.
-# The fraction is extracted from the query so per-run semantics are visible.
+# v0 trace language supports: LOAD <frac>; zero+ MASK_BIT bit=<i> val=<0/1>; WITNESS_NEAREST target=<frac>; RETURN_SET.
+# IMPORTANT: we still constrain decoding to a single, query-derived candidate (deterministic), but the candidate now reflects recognized constraints.
 import re
 
 m = re.search(r"(-?\d+)\s*/\s*(-?\d+)", query)
@@ -53,21 +53,56 @@ if m:
 else:
     frac = "7/200"  # fallback if no fraction found
 
-OPS_V0 = [
-    f"LOAD {frac}",
-    "MASK_BIT bit=2 val=1",
-    f"WITNESS_NEAREST target={frac}",
-    "RETURN_SET",
-]
+q = query.lower()
 
-# Candidates are full valid outputs in the trace language.
-# In v0 we allow exactly one candidate per query (parameterized by frac).
-CANDIDATES = [
-    "\n".join(OPS_V0) + "\n",
-]
-CANDIDATES = [
-    "\n".join(OPS_V0) + "\n",
-]
+# Bit legend (QE v0, matches src/semtrace.rs bit_legend):
+# 0: positive
+# 1: integer
+# 2: den<=6
+# 3: num_even
+# 4: den_mod3
+# 5: proper
+# 6: num_abs<=5
+
+bits = set()
+
+# den<=6
+if ("denominator" in q or "den<=" in q or "den <= " in q or "den≤" in q) and ("6" in q):
+    bits.add(2)
+if "den<=6" in q or "den ≤ 6" in query or "den≤6" in q or "<= 6" in q or "≤ 6" in query:
+    bits.add(2)
+
+# integer
+if "integer" in q:
+    bits.add(1)
+
+# positive
+if "positive" in q:
+    bits.add(0)
+
+# proper
+if "proper" in q:
+    bits.add(5)
+
+# even
+if "even" in q or "num_even" in q:
+    bits.add(3)
+
+# den_mod3
+if "den_mod3" in q or "den mod 3" in q or "den%3" in q or "den % 3" in q:
+    bits.add(4)
+
+# num_abs<=5
+if "num_abs<=5" in q or "num_abs ≤ 5" in query or "abs<=5" in q or "abs ≤ 5" in query:
+    bits.add(6)
+
+ops = [f"LOAD {frac}"]
+for i in sorted(bits):
+    ops.append(f"MASK_BIT bit={i} val=1")
+ops.append(f"WITNESS_NEAREST target={frac}")
+ops.append("RETURN_SET")
+
+CANDIDATES = ["\n".join(ops) + "\n"]
 
 prompt = (
     "You are a semantic trace generator.\n"
