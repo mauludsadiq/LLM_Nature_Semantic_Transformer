@@ -95,12 +95,14 @@ fn witness_nearest(set: &[Frac], target: &Frac) -> Option<Frac> {
 
 pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let qe = build_qe();
+    let ge_state = crate::geom::build_ge(20);
     let txt = fs::read_to_string(trace_path)?;
 
     let mut state_set: Vec<Frac> = Vec::new();
     let mut cst = Constraint::empty();
     let mut set_digest = sha256_bytes(b"");
     let mut witness: Option<Frac> = None;
+    let mut is_ge: bool = false;
 
     let mut chain: [u8; 32] = sha256_bytes(b"");
 
@@ -112,10 +114,26 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
         match rec.op.as_str() {
             "START_ELEM" => {
                 let elem = rec.args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
-                let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac"))?;
-                // v0 semantics: START_ELEM grounds the target but does not constrain the set.
+                is_ge = elem.contains(",");
+                let f = if is_ge {
+                    let parts: Vec<&str> = elem.split(",").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                    if parts.len() != 3 { return Err(anyhow!("bad tri")); }
+                    let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri"))?;
+                    let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri"))?;
+                    let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri"))?;
+                    let _ = crate::geom::Tri::new(a,b,c).ok_or_else(|| anyhow!("bad tri"))?;
+                    crate::qe::Frac { num: a, den: c }
+                } else {
+                    parse_frac(elem).ok_or_else(|| anyhow!("bad frac"))?
+                }; 
                 cst = Constraint::empty();
-                state_set = qe.clone();
+                state_set = if is_ge {
+                    let mut tris: Vec<crate::geom::Tri> = ge_state.clone();
+                    tris.sort_by(crate::geom::canonical_cmp);
+                    tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect()
+                } else {
+                    qe.clone()
+                };
                 set_digest = canonical_set_digest(&state_set);
                 witness = Some(f);
             }
@@ -123,7 +141,13 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 let i = rec.args.get("i").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u8;
                 let b = rec.args.get("b").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u8;
                 cst = cst.set_bit(i, b);
-                state_set = filter_qe(&qe, cst);
+                if is_ge {
+                    let mut tris: Vec<crate::geom::Tri> = ge_state.iter().copied().filter(|t| cst.matches(crate::semtrace::sig7_geom(t))).collect();
+                    tris.sort_by(crate::geom::canonical_cmp);
+                    state_set = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                } else {
+                    state_set = filter_qe(&qe, cst);
+                }
                 if state_set.is_empty() { return Ok(false); }
                 set_digest = canonical_set_digest(&state_set);
             }
@@ -131,7 +155,17 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 let target = rec.args.get("target_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
                 let metric = rec.args.get("metric").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
                 if metric != "ABS_DIFF" { return Ok(false); }
-                let t = parse_frac(target).ok_or_else(|| anyhow!("bad target"))?;
+                let t: Frac = if is_ge || target.contains(",") {
+                    let parts: Vec<&str> = target.split(",").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                    if parts.len() != 3 { return Ok(false); }
+                    let a: i32 = parts[0].parse().ok().unwrap_or(0);
+                    let b: i32 = parts[1].parse().ok().unwrap_or(0);
+                    let c: i32 = parts[2].parse().ok().unwrap_or(0);
+                    if crate::geom::Tri::new(a,b,c).is_none() { return Ok(false); }
+                    Frac { num: a, den: c }
+                } else {
+                    parse_frac(target).ok_or_else(|| anyhow!("bad target"))?
+                };
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty"))?;
                 witness = Some(w);
             }
@@ -143,19 +177,17 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
 
         // check post fields
         let post_set_hex = rec.post.set_digest.clone().unwrap_or_default();
-        if post_set_hex != hex32(set_digest) { return Ok(false); }
-        if rec.post.count != state_set.len() { return Ok(false); }
+        if post_set_hex != hex32(set_digest) { return Err(anyhow!("post.set_digest mismatch step={} got={} want={}", rec.step, post_set_hex, hex32(set_digest))); }
+        if rec.post.count != state_set.len() { return Err(anyhow!("post.count mismatch step={} got={} want={}", rec.step, rec.post.count, state_set.len())); }
         if let Some(w) = witness {
             if rec.post.witness.as_deref() != Some(&frac_to_string(&w)) {
-                // RETURN_SET might keep witness; still must match if present
-                // if post witness omitted, ok; but our executor always includes if known
-                return Ok(false);
+                return Err(anyhow!("post.witness mismatch step={} got={:?} want={}", rec.step, rec.post.witness, frac_to_string(&w)));
             }
         }
 
         let sd = step_digest(&chain, &rec.op, &rec.args, &set_digest);
         chain = sd;
-        if rec.step_digest != hex32(sd) { return Ok(false); }
+        if rec.step_digest != hex32(sd) { return Err(anyhow!("step_digest mismatch step={} got={} want={}", rec.step, rec.step_digest, hex32(sd))); }
     }
 
     Ok(true)

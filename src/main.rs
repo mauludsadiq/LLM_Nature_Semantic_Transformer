@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 mod digest;
 mod qe;
+mod geom;
 mod semtrace;
 mod exec;
 mod verify;
@@ -63,28 +64,29 @@ fn proposer_ops_to_trace(ops: &[String]) -> Result<Trace> {
 }
 
 fn main() -> Result<()> {
-    // Query
     let query = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "Find fractions similar to 7/200 but with denominator ≤ 6".to_string());
-
-    // Proposer: GPT-2 via Python bridge.
-    // NOTE: decoding is currently grammar-constrained to valid v0 traces (see scripts/gpt2_proposer.py).
-    let proposer = gpt2::GPT2Proposer::new()?;
-    let trace_ops = proposer.generate_trace(&query)?;
 
     println!("");
     println!("\u{1b}[1mQUERY:\u{1b}[0m {}", query);
     println!("");
 
-    println!("\u{1b}[1mPROPOSER OPS (raw):\u{1b}[0m");
-    for op in &trace_ops {
-        println!("  {}", op);
-    }
-    println!("");
+    let trace: Trace = if query.trim_start().starts_with("{") {
+        serde_json::from_str::<Trace>(&query)
+            .map_err(|e| anyhow!("bad trace json: {}", e))?
+    } else {
+        let proposer = gpt2::GPT2Proposer::new()?;
+        let trace_ops = proposer.generate_trace(&query)?;
 
-    // Convert proposer ops -> semtrace::Trace (real executable semantics)
-    let trace = proposer_ops_to_trace(&trace_ops)?;
+        println!("\u{1b}[1mPROPOSER OPS (raw):\u{1b}[0m");
+        for op in &trace_ops {
+            println!("  {}", op);
+        }
+        println!("");
+
+        proposer_ops_to_trace(&trace_ops)?
+    };
 
     // Execute (writes trace.ndjson, result.json, proof.json, paragraph.txt)
     let out_dir: PathBuf = exec::run_trace_and_write(&trace, None)?;

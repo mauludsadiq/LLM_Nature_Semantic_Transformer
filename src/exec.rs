@@ -118,10 +118,11 @@ fn witness_nearest(set: &[Frac], target: &Frac) -> Option<Frac> {
 }
 
 pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBuf> {
-    if trace.universe != "QE" || trace.bits != 7 {
+    if !((trace.universe == "QE" || trace.universe == "GE") && trace.bits == 7) {
         return Err(anyhow!("unsupported universe/bits for v0"));
     }
     let qe = build_qe();
+    let ge_state = crate::geom::build_ge(20);
 
     // initial empty state
     let mut state = State {
@@ -176,12 +177,16 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
             match op {
                 Op::StartElem { .. } => {
                     cst = Constraint::empty();
-                    cur_set = state.qe.clone();
+                    cur_set = if trace.universe == "GE" { ge_as_fracs(&ge_state) } else { state.qe.clone() };
                     exec_ops.push(op.clone());
                 }
                 Op::SetBit { i, b } => {
                     let next_cst = cst.set_bit(*i, *b);
-                    let next_set = filter_qe(&state.qe, next_cst);
+                    let next_set = if trace.universe == "GE" {
+                        filter_ge(&ge_state, next_cst).into_iter().map(|t| Frac { num: t.a, den: t.c }).collect()
+                    } else {
+                        filter_qe(&state.qe, next_cst)
+                    };
                     if !cur_set.is_empty() && next_set == cur_set {
                         let bit_name = legend.get(*i as usize).copied().unwrap_or("?");
                         skipped.push(format!(
@@ -221,11 +226,21 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
         let (op_name, args_json, post_state_digest): (String, serde_json::Value, [u8; 32]) =
             match op {
                 Op::StartElem { elem } => {
-                    let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac: {}", elem))?;
+                    let f = if elem.contains(",") {
+                        let parts: Vec<&str> = elem.split(",").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                        if parts.len() != 3 { return Err(anyhow!("bad tri: {}", elem)); }
+                        let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri: {}", elem))?;
+                        let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri: {}", elem))?;
+                        let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri: {}", elem))?;
+                        let _ = crate::geom::Tri::new(a,b,c).ok_or_else(|| anyhow!("bad tri: {}", elem))?;
+                        Frac { num: a, den: c }
+                    } else {
+                        parse_frac(elem).ok_or_else(|| anyhow!("bad frac: {}", elem))?
+                    };
                     // v0 semantics: START_ELEM grounds the target but does not constrain the set.
                     // Constraints are applied by subsequent ops (e.g. SET_BIT).
                     state.cst = Constraint::empty();
-                    state.set = state.qe.clone();
+                    state.set = if trace.universe == "GE" { ge_as_fracs(&ge_state) } else { state.qe.clone() };
                     state.set_digest = canonical_set_digest(&state.set);
                     state.witness = Some(f);
                     (
@@ -236,7 +251,14 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                 }
                 Op::SetBit { i, b } => {
                     state.cst = state.cst.set_bit(*i, *b);
-                    state.set = filter_qe(&state.qe, state.cst);
+                    state.set = if trace.universe == "GE" {
+                        filter_ge(&ge_state, state.cst)
+                            .into_iter()
+                            .map(|t| Frac { num: t.a, den: t.c })
+                            .collect()
+                    } else {
+                        filter_qe(&state.qe, state.cst)
+                    };
                     if state.set.is_empty() {
                         return Err(anyhow!("ERROR_EMPTY_SET"));
                     }
@@ -254,8 +276,17 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
                     if metric != "ABS_DIFF" {
                         return Err(anyhow!("unsupported metric"));
                     }
-                    let target =
-                        parse_frac(target_elem).ok_or_else(|| anyhow!("bad target frac"))?;
+                    let target = if target_elem.contains(",") {
+                        let parts: Vec<&str> = target_elem.split(",").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                        if parts.len() != 3 { return Err(anyhow!("bad tri target: {}", target_elem)); }
+                        let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                        let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                        let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri target: {}", target_elem))?;
+                        let _ = crate::geom::Tri::new(a,b,c).ok_or_else(|| anyhow!("bad tri target: {}", target_elem))?;
+                        Frac { num: a, den: c }
+                    } else {
+                        parse_frac(target_elem).ok_or_else(|| anyhow!("bad target frac"))?
+                    };
                     let w = witness_nearest(&state.set, &target)
                         .ok_or_else(|| anyhow!("ERROR_EMPTY_SET"))?;
                     state.witness = Some(w);
@@ -417,3 +448,20 @@ pub fn run_trace_and_write(trace: &Trace, out: Option<PathBuf>) -> Result<PathBu
 
     Ok(out_dir)
 }
+
+// ---------------- GE FILTER ----------------
+fn filter_ge(ge: &[crate::geom::Tri], cst: Constraint) -> Vec<crate::geom::Tri> {
+    let mut out = Vec::new();
+    for t in ge {
+        if cst.matches(crate::semtrace::sig7_geom(t)) {
+            out.push(*t);
+        }
+    }
+    out.sort_by(crate::geom::canonical_cmp);
+    out
+}
+
+fn ge_as_fracs(ge: &[crate::geom::Tri]) -> Vec<Frac> {
+    ge.iter().map(|t| Frac { num: t.a, den: t.c }).collect()
+}
+

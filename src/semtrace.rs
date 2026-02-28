@@ -72,6 +72,37 @@ pub fn sig7(f: &Frac) -> u8 {
     bits
 }
 
+// ---------------- GEOMETRY SIGNATURE ----------------
+use crate::geom::Tri;
+
+pub fn sig7_geom(t: &Tri) -> u8 {
+    let mut bits: u8 = 0;
+
+    let perimeter_le_20 = t.perimeter() <= 20;        // bit 0
+    let is_isosceles = t.is_isosceles();              // bit 1
+    let is_equilateral = t.is_equilateral();          // bit 2
+    let is_primitive = t.is_primitive();              // bit 3
+    let is_right = t.angle_type() == std::cmp::Ordering::Equal; // bit 4
+    let is_acute = t.angle_type() == std::cmp::Ordering::Greater; // bit 5
+    let is_obtuse = t.angle_type() == std::cmp::Ordering::Less;   // bit 6
+
+    let preds = [
+        perimeter_le_20,
+        is_isosceles,
+        is_equilateral,
+        is_primitive,
+        is_right,
+        is_acute,
+        is_obtuse,
+    ];
+
+    for (i, p) in preds.iter().enumerate() {
+        if *p { bits |= 1u8 << i; }
+    }
+
+    bits
+}
+
 /// Constraint (mask,value) for partial signature filtering.
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
