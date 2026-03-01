@@ -551,17 +551,36 @@ pub fn run_trace_and_write(
     let witness_s = if is_boolfun { witness_bf.as_ref().map(boolfun_to_string) } else { witness.as_ref().map(frac_to_string) };
 
     let mut sample: Vec<String> = Vec::new();
-      if is_boolfun {
-          let n = want_max_items.min(boolfun_set.len());
-          for f in boolfun_set.iter().take(n) {
-              sample.push(boolfun_to_string(f));
-          }
-      } else {
-          let n = want_max_items.min(state_set.len());
-          for f in state_set.iter().take(n) {
-              sample.push(frac_to_string(f));
-          }
-      }
+
+    if want_include_witness {
+        if let Some(w) = witness_s.as_ref() {
+            sample.push(w.clone());
+        }
+    }
+
+    let remain = want_max_items.saturating_sub(sample.len());
+
+    if is_boolfun {
+        let mut pushed = 0usize;
+        for f in boolfun_set.iter() {
+            if pushed >= remain { break; }
+            if let Some(w) = witness_bf.as_ref() {
+                if *f == *w { continue; }
+            }
+            sample.push(boolfun_to_string(f));
+            pushed += 1;
+        }
+    } else {
+        let mut pushed = 0usize;
+        for f in state_set.iter() {
+            if pushed >= remain { break; }
+            if let Some(w) = witness.as_ref() {
+                if *f == *w { continue; }
+            }
+            sample.push(frac_to_string(f));
+            pushed += 1;
+        }
+    }
 
     let set_nonempty = if is_boolfun { !boolfun_set.is_empty() } else { !state_set.is_empty() };
     let verdict_ok = replay_ok;
