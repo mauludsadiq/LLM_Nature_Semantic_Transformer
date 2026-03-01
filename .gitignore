@@ -2,3 +2,5 @@ target/
 runs/
 *.zip
 .DS_Store
+traces/
+
