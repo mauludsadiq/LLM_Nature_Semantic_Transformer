@@ -18,6 +18,12 @@ pub enum Op {
     StartElem { elem: String },
     #[serde(rename="SET_BIT")]
     SetBit { i: u8, b: u8 },
+    #[serde(rename="SELECT_UNIVERSE")]
+    SelectUniverse { universe: String, n: u8 },
+    #[serde(rename="FILTER_WEIGHT")]
+    FilterWeight { min: u32, max: u32 },
+    #[serde(rename="TOPK")]
+    TopK { target_elem: String, k: usize },
     #[serde(rename="WITNESS_NEAREST")]
     WitnessNearest { target_elem: String, metric: String },
     #[serde(rename="RETURN_SET")]

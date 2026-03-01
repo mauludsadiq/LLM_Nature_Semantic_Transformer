@@ -1,6 +1,7 @@
 use crate::digest::{sha256_bytes, merkle_root};
 use crate::qe::{build_qe, canonical_cmp, parse_frac, Frac};
 use crate::semtrace::{sig7, Constraint};
+use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::fs;
@@ -41,6 +42,14 @@ fn canonical_set_digest(set: &[Frac]) -> [u8; 32] {
     merkle_root(&leaves)
 }
 
+fn canonical_set_digest_boolfun(set: &[BoolFun]) -> [u8; 32] {
+    let mut leaves: Vec<[u8; 32]> = Vec::with_capacity(set.len());
+    for f in set {
+        leaves.push(sha256_bytes(&f.canonical_bytes()));
+    }
+    merkle_root(&leaves)
+}
+
 fn hex32(b: [u8; 32]) -> String { hex::encode(b) }
 
 fn step_digest(pre: &[u8], op: &str, args: &serde_json::Value, post: &[u8]) -> [u8; 32] {
@@ -66,6 +75,14 @@ fn filter_qe(qe: &[Frac], cst: Constraint) -> Vec<Frac> {
 }
 
 fn frac_to_string(f: &Frac) -> String { format!("{}/{}", f.num, f.den) }
+
+fn boolfun_to_string(f: &BoolFun) -> String {
+    if f.n == 4 {
+        format!("0x{:04X}", (f.bits & 0xFFFF) as u16)
+    } else {
+        format!("u64:{}", f.bits)
+    }
+}
 
 fn distance_num_den(target: &Frac, cand: &Frac) -> (i64, i64) {
     let a = target.num as i64;
@@ -98,10 +115,16 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let ge_state = crate::geom::build_ge(20);
     let txt = fs::read_to_string(trace_path)?;
 
+    let mut boolfun_all: Vec<BoolFun> = Vec::new();
+    let mut boolfun_set: Vec<BoolFun> = Vec::new();
+    let mut boolfun_n: u8 = 0;
+    let mut is_boolfun: bool = false;
+
     let mut state_set: Vec<Frac> = Vec::new();
     let mut cst = Constraint::empty();
     let mut set_digest = sha256_bytes(b"");
     let mut witness: Option<Frac> = None;
+    let mut witness_bf: Option<BoolFun> = None;
     let mut is_ge: bool = false;
 
     let mut chain: [u8; 32] = sha256_bytes(b"");
@@ -112,6 +135,55 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
 
         // recompute transition based on rec.op/args
         match rec.op.as_str() {
+            "SELECT_UNIVERSE" => {
+                let u = rec.args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                let n = rec.args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u8;
+
+                let u_norm = u.to_ascii_uppercase();
+                is_boolfun = u_norm == "BOOLFUN" || u_norm == "BOOLFUN<N>" || u_norm == "BOOLFUN4" || u_norm == "BOOLFUN_4" || u_norm == "BOOLFUNV0" || u_norm == "BOOLFUNV1" || u_norm == "BOOLFUNS" || u_norm == "BOOLFUNS<N>" || u_norm == "BOOLFUNS4" || u_norm == "BOOLFUNS_4" || u_norm == "BOOLFUNS_V0" || u_norm == "BOOLFUNS_V1";
+                if !is_boolfun { return Ok(false); }
+
+                // switch universe
+                is_ge = false;
+                cst = Constraint::empty();
+                state_set.clear();
+                witness = None;
+
+                boolfun_n = n;
+                boolfun_all = build_boolfun(n);
+                boolfun_set = boolfun_all.clone();
+                boolfun_set.sort_by(boolfun_canonical_cmp);
+                set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                witness_bf = None;
+            }
+            "FILTER_WEIGHT" => {
+                if !is_boolfun { return Ok(false); }
+                let min = rec.args.get("min").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u32;
+                let max = rec.args.get("max").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u32;
+                let mut out: Vec<BoolFun> = boolfun_all.iter().copied().filter(|f| {
+                    let w = f.weight();
+                    w >= min && w <= max
+                }).collect();
+                out.sort_by(boolfun_canonical_cmp);
+                boolfun_set = out;
+                set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                witness_bf = None;
+            }
+            "TOPK" => {
+                if !is_boolfun { return Ok(false); }
+                let target_s = rec.args.get("target_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                let k = rec.args.get("k").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as usize;
+                let target = parse_boolfun(target_s).ok_or_else(|| anyhow!("bad target"))?;
+                if target.n != boolfun_n { return Ok(false); }
+
+                let mut scored: Vec<(u32, BoolFun)> = boolfun_set.iter().copied().map(|f| (f.hamming(&target), f)).collect();
+                scored.sort_by(|(da, fa), (db, fb)| da.cmp(db).then_with(|| boolfun_canonical_cmp(fa, fb)));
+                let take = k.min(scored.len());
+                let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
+                witness_bf = top.get(0).copied();
+                // digest/count unchanged
+            }
+
             "START_ELEM" => {
                 let elem = rec.args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
                 is_ge = elem.contains(",");
@@ -183,11 +255,27 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
 
         // check post fields
         let post_set_hex = rec.post.set_digest.clone().unwrap_or_default();
-        if post_set_hex != hex32(set_digest) { return Err(anyhow!("post.set_digest mismatch step={} got={} want={}", rec.step, post_set_hex, hex32(set_digest))); }
-        if rec.post.count != state_set.len() { return Err(anyhow!("post.count mismatch step={} got={} want={}", rec.step, rec.post.count, state_set.len())); }
-        if let Some(w) = witness {
-            if rec.post.witness.as_deref() != Some(&frac_to_string(&w)) {
-                return Err(anyhow!("post.witness mismatch step={} got={:?} want={}", rec.step, rec.post.witness, frac_to_string(&w)));
+        if post_set_hex != hex32(set_digest) {
+            return Err(anyhow!("post.set_digest mismatch step={} got={} want={}", rec.step, post_set_hex, hex32(set_digest)));
+        }
+
+        if rec.post.count != (if is_boolfun { boolfun_set.len() } else { state_set.len() }) {
+            return Err(anyhow!("post.count mismatch step={} got={} want={}", rec.step, rec.post.count, if is_boolfun { boolfun_set.len() } else { state_set.len() }));
+        }
+
+        if is_boolfun {
+            if let Some(w) = witness_bf {
+                let want = boolfun_to_string(&w);
+                if rec.post.witness.as_deref() != Some(&want) {
+                    return Err(anyhow!("post.witness mismatch step={} got={:?} want={}", rec.step, rec.post.witness, want));
+                }
+            }
+        } else {
+            if let Some(w) = witness {
+                let want = frac_to_string(&w);
+                if rec.post.witness.as_deref() != Some(&want) {
+                    return Err(anyhow!("post.witness mismatch step={} got={:?} want={}", rec.step, rec.post.witness, want));
+                }
             }
         }
 
