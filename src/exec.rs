@@ -251,7 +251,7 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
                 target = Some(t.trim_start_matches("target_elem=").to_string());
             }
             if metric.is_none() && t.starts_with("metric=") {
-                metric = Some(t.trim_start_matches("metric=").to_string());
+                metric = Some(t.trim_start_matches("metric=").trim_end_matches(|c: char| c==';' || c==',').to_string());
             }
         }
         let target_elem = target.ok_or_else(|| anyhow!("WITNESS_NEAREST missing target="))?;
@@ -289,7 +289,7 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
                     continue;
                 }
                 if metric.is_none() && t.starts_with("metric=") {
-                    metric = Some(t.trim_start_matches("metric=").to_string());
+                    metric = Some(t.trim_start_matches("metric=").trim_end_matches(|c: char| c==';' || c==',').to_string());
                     continue;
                 }
             }
