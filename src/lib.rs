@@ -5,3 +5,4 @@ pub mod semtrace;
 pub mod verify;
 pub mod digest;
 pub mod boolfun;
+pub mod compiler;

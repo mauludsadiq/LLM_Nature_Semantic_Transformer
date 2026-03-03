@@ -87,7 +87,46 @@ fn main() -> Result<()> {
         
         (ops, Some(trace_path))
     } else {
-          return Err(anyhow!("non-JSON query input is disabled (GPT-2 proposer removed); pass a JSON trace with ops"));
+        // Deterministic, auditable compiler for a small NL subset (no ML proposer)
+        let t = llm_nature_semantic_transformer::compiler::compile_query_to_trace(&cli.query)?;
+        let mut out: Vec<String> = Vec::with_capacity(t.ops.len());
+        for op in t.ops.iter() {
+            match op {
+                llm_nature_semantic_transformer::semtrace::Op::StartElem { elem } => {
+                    out.push(format!("LOAD {}", elem));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::SetBit { i, b } => {
+                    out.push(format!("MASK_BIT bit={} val={}", i, b));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::SelectUniverse { universe, n } => {
+                    out.push(format!("SELECT_UNIVERSE universe={} n={}", universe, n));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::FilterWeight { min, max } => {
+                    out.push(format!("FILTER_WEIGHT min={} max={}", min, max));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::TopK { target_elem, k } => {
+                    out.push(format!("TOPK target_elem={} k={}", target_elem, k));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::WitnessNearest { target_elem, metric } => {
+                    out.push(format!("WITNESS_NEAREST target_elem={} metric={}", target_elem, metric));
+                }
+                llm_nature_semantic_transformer::semtrace::Op::ReturnSet { max_items, include_witness } => {
+                    out.push(format!(
+                        "RETURN_SET max_items={} include_witness={}",
+                        max_items,
+                        if *include_witness { 1 } else { 0 }
+                    ));
+                }
+            }
+        }
+
+        // Write compiled semtrace JSON for auditability
+        let trace_dir = PathBuf::from("traces");
+        fs::create_dir_all(&trace_dir)?;
+        let trace_path = trace_dir.join("compiled_input.json");
+        fs::write(&trace_path, serde_json::to_string_pretty(&t)?)?;
+
+        (out, Some(trace_path))
       };
     
     // Run the trace through the verifier
