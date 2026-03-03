@@ -9,7 +9,7 @@ use crate::digest::{merkle_root, sha256_bytes};
 use crate::qe::{build_qe, canonical_cmp, parse_frac, Frac};
 use crate::semtrace::{sig7, sig7_geom, Constraint};
 #[allow(unused_imports)]
-use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun};
+use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun, is_boolfun_universe};
 
 #[derive(Debug)]
 pub struct ExecutionResult {
@@ -346,10 +346,7 @@ pub fn run_trace_and_write(
 
                 let u_norm = u.to_ascii_uppercase();
 
-                is_boolfun = matches!(u_norm.as_str(),
-                    "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
-                    "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
-                );
+                is_boolfun = is_boolfun_universe(u_norm.as_str());
                 if !is_boolfun {
                     return Err(anyhow!("unsupported universe: {}", u));
                 }

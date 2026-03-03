@@ -1,7 +1,7 @@
 use crate::digest::{sha256_bytes, merkle_root};
 use crate::qe::{build_qe, canonical_cmp, parse_frac, Frac};
 use crate::semtrace::{sig7, Constraint};
-use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun};
+use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun, is_boolfun_universe};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::fs;
@@ -140,10 +140,7 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 let n = rec.args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u8;
 
                 let u_norm = u.to_ascii_uppercase();
-                is_boolfun = matches!(u_norm.as_str(),
-                    "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
-                    "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
-                );
+                is_boolfun = is_boolfun_universe(u_norm.as_str());
                 if !is_boolfun { return Ok(false); }
 
                 // switch universe

@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+pub fn is_boolfun_universe(u_norm: &str) -> bool {
+    matches!(u_norm,
+        "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
+        "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
+    )
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct BoolFun {
     pub n: u8,      // number of input vars
