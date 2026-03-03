@@ -349,7 +349,10 @@ pub fn run_trace_and_write(
                     // accept many spellings; canonical is BOOLFUN
                 }
 
-                is_boolfun = u_norm == "BOOLFUN" || u_norm == "BOOLFUN<N>" || u_norm == "BOOLFUN4" || u_norm == "BOOLFUN_4" || u_norm == "BOOLFUNV0" || u_norm == "BOOLFUNV1" || u_norm == "BOOLFUNS" || u_norm == "BOOLFUNS<N>" || u_norm == "BOOLFUNS4" || u_norm == "BOOLFUNS_4" || u_norm == "BOOLFUNS_V0" || u_norm == "BOOLFUNS_V1";
+                is_boolfun = matches!(u_norm.as_str(),
+                      "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
+                      "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
+                  );
                 if !is_boolfun {
                     return Err(anyhow!("unsupported universe: {}", u));
                 }
