@@ -284,6 +284,11 @@ pub fn compile_query_to_trace(query: &str) -> Result<Trace> {
         return Err(anyhow!("empty query"));
     }
 
+    // JOIN_NEAREST explicit op
+    if q.to_ascii_uppercase().contains("JOIN_NEAREST") {
+        return Err(anyhow!("JOIN_NEAREST requires explicit JSON ops; not supported in NL compiler yet"));
+    }
+
     // QE (fractions) path: requires a fraction seed.
     if let Some(fr) = first_frac(q) {
         let mut ops: Vec<Op> = Vec::new();
@@ -477,4 +482,11 @@ mod tests {
             Op::TopK { target_elem, k } if target_elem=="0xBEEF" && *k==5
         )));
     }
+
+  #[test]
+  fn compile_join_nearest_rejected() {
+      let e = compile_query_to_trace("JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF").err().unwrap();
+      let msg = format!("{e}");
+      assert!(msg.contains("JOIN_NEAREST"));
+  }
 }
