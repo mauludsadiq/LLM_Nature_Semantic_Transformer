@@ -136,27 +136,41 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
         // recompute transition based on rec.op/args
         match rec.op.as_str() {
             "SELECT_UNIVERSE" => {
-                let u = rec.args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
-                let n = rec.args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u8;
+                  let u = rec.args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let n = rec.args.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
-                let u_norm = u.to_ascii_uppercase();
-                is_boolfun = is_boolfun_universe(u_norm.as_str());
-                if !is_boolfun { return Ok(false); }
+                  let u_norm = u.to_ascii_uppercase();
 
-                // switch universe
-                is_ge = false;
-                cst = Constraint::empty();
-                state_set.clear();
-                witness = None;
+                  if is_boolfun_universe(u_norm.as_str()) {
+                      is_boolfun = true;
 
-                boolfun_n = n;
-                boolfun_all = build_boolfun(n);
-                boolfun_set = boolfun_all.clone();
-                boolfun_set.sort_by(boolfun_canonical_cmp);
-                set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                witness_bf = None;
-            }
-            "FILTER_WEIGHT" => {
+                      // switch universe -> BOOLFUN
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      state_set.clear();
+                      witness = None;
+
+                      boolfun_n = n;
+                      boolfun_all = build_boolfun(n);
+                      boolfun_set = boolfun_all.clone();
+                      boolfun_set.sort_by(boolfun_canonical_cmp);
+                      set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                      witness_bf = None;
+                  } else if u_norm == "QE" {
+                      // switch universe -> QE
+                      is_boolfun = false;
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      witness = None;
+                      witness_bf = None;
+
+                      state_set = qe.clone();
+                      set_digest = canonical_set_digest(&state_set);
+                  } else {
+                      return Ok(false);
+                  }
+              }
+              "FILTER_WEIGHT" => {
                 if !is_boolfun { return Ok(false); }
                 let min = rec.args.get("min").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u32;
                 let max = rec.args.get("max").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as u32;
@@ -247,7 +261,23 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty"))?;
                 witness = Some(w);
             }
-            "RETURN_SET" => {
+              "JOIN_NEAREST" => {
+                  let metric = rec.args.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
+                  if metric != "ABS_DIFF" && metric != "HAMMING" {
+                      return Err(anyhow!("unsupported join metric: {}", metric));
+                  }
+                  let left = rec.args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  if is_boolfun {
+                      let bf = parse_boolfun(left).ok_or_else(|| anyhow!("bad left_elem"))?;
+                      if bf.n != boolfun_n { return Ok(false); }
+                      witness_bf = Some(bf);
+                  } else {
+                      let f = parse_frac(left).ok_or_else(|| anyhow!("bad left_elem"))?;
+                      witness = Some(f);
+                  }
+                  // v1: minimal activation (single-side projection: left_elem -> witness)
+              }
+              "RETURN_SET" => {
                 // no-op for state
             }
             _ => return Ok(false),

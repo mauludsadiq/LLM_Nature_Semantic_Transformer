@@ -262,7 +262,57 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
         ));
     }
 
-    if s.starts_with("RETURN_SET") {
+    if s.starts_with("JOIN_NEAREST") {
+            // expected: JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF
+            let toks: Vec<&str> = s.split_whitespace().collect();
+            let mut left_universe: Option<String> = None;
+            let mut right_universe: Option<String> = None;
+            let mut left_elem: Option<String> = None;
+            let mut right_elem: Option<String> = None;
+            let mut metric: Option<String> = None;
+
+            for t in toks.iter().skip(1) {
+                if left_universe.is_none() && t.starts_with("left_universe=") {
+                    left_universe = Some(t.trim_start_matches("left_universe=").to_string());
+                    continue;
+                }
+                if right_universe.is_none() && t.starts_with("right_universe=") {
+                    right_universe = Some(t.trim_start_matches("right_universe=").to_string());
+                    continue;
+                }
+                if left_elem.is_none() && t.starts_with("left_elem=") {
+                    left_elem = Some(t.trim_start_matches("left_elem=").to_string());
+                    continue;
+                }
+                if right_elem.is_none() && t.starts_with("right_elem=") {
+                    right_elem = Some(t.trim_start_matches("right_elem=").to_string());
+                    continue;
+                }
+                if metric.is_none() && t.starts_with("metric=") {
+                    metric = Some(t.trim_start_matches("metric=").to_string());
+                    continue;
+                }
+            }
+
+            let left_universe = left_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe="))?;
+            let right_universe = right_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe="))?;
+            let left_elem = left_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem="))?;
+            let right_elem = right_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem="))?;
+            let metric = metric.unwrap_or_else(|| "ABS_DIFF".to_string());
+
+            return Ok((
+                "JOIN_NEAREST".to_string(),
+                json!({
+                    "left_universe": left_universe,
+                    "right_universe": right_universe,
+                    "left_elem": left_elem,
+                    "right_elem": right_elem,
+                    "metric": metric
+                }),
+            ));
+        }
+
+        if s.starts_with("RETURN_SET") {
         // expected: RETURN_SET max_items=10 include_witness=true
         let toks: Vec<&str> = s.split_whitespace().collect();
         let mut max_items: usize = 20;
@@ -341,29 +391,40 @@ pub fn run_trace_and_write(
 
         match op.as_str() {
             "SELECT_UNIVERSE" => {
-                let u = args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args for SELECT_UNIVERSE"))?;
-                let n = args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args for SELECT_UNIVERSE"))? as u8;
+                  let u = args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args for SELECT_UNIVERSE"))?;
+                  let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
-                let u_norm = u.to_ascii_uppercase();
+                  let u_norm = u.to_ascii_uppercase();
 
-                is_boolfun = is_boolfun_universe(u_norm.as_str());
-                if !is_boolfun {
-                    return Err(anyhow!("unsupported universe: {}", u));
-                }
+                  // BOOLFUN
+                  if is_boolfun_universe(u_norm.as_str()) {
+                      is_boolfun = true;
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      state_set.clear();
+                      witness = None;
 
-                is_ge = false;
-                cst = Constraint::empty();
-                state_set.clear();
-                witness = None;
+                      boolfun_n = n;
+                      boolfun_all = build_boolfun(n);
+                      boolfun_set = boolfun_all.clone();
+                      boolfun_set.sort_by(boolfun_canonical_cmp);
+                      set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                      witness_bf = None;
+                  } else if u_norm == "QE" {
+                      // QE (fractions)
+                      is_boolfun = false;
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      witness = None;
+                      witness_bf = None;
 
-                boolfun_n = n;
-                boolfun_all = build_boolfun(n);
-                boolfun_set = boolfun_all.clone();
-                boolfun_set.sort_by(boolfun_canonical_cmp);
-                set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                witness_bf = None;
-            }
-            "FILTER_WEIGHT" => {
+                      state_set = qe.clone();
+                      set_digest = canonical_set_digest(&state_set);
+                  } else {
+                      return Err(anyhow!("unsupported universe: {}", u));
+                  }
+              }
+              "FILTER_WEIGHT" => {
                 if !is_boolfun {
                     return Err(anyhow!("FILTER_WEIGHT requires BOOLFUN universe"));
                 }
@@ -500,7 +561,23 @@ pub fn run_trace_and_write(
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
                 witness = Some(w);
             }
-            "RETURN_SET" => {
+              "JOIN_NEAREST" => {
+                  let metric = args.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
+                  if metric != "ABS_DIFF" && metric != "HAMMING" {
+                      return Err(anyhow!("unsupported join metric: {}", metric));
+                  }
+                  let left = args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem"))?;
+                  if is_boolfun {
+                      let bf = parse_boolfun(left).ok_or_else(|| anyhow!("bad left_elem"))?;
+                      if bf.n != boolfun_n { return Err(anyhow!("JOIN_NEAREST left_elem n mismatch: have={} want={}", bf.n, boolfun_n)); }
+                      witness_bf = Some(bf);
+                  } else {
+                      let f = parse_frac(left).ok_or_else(|| anyhow!("bad left_elem"))?;
+                      witness = Some(f);
+                  }
+                  // v1: minimal activation (single-side projection: left_elem -> witness)
+              }
+              "RETURN_SET" => {
                 want_max_items = args
                     .get("max_items")
                     .and_then(|v| v.as_u64())

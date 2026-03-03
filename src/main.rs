@@ -117,6 +117,7 @@ fn main() -> Result<()> {
                         if *include_witness { 1 } else { 0 }
                     ));
                 }
+                            _ => {}
             }
         }
 

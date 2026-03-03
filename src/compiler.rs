@@ -1,6 +1,172 @@
 use anyhow::{anyhow, Result};
 use crate::semtrace::{Op, Trace};
 
+#[derive(Clone, Debug)]
+pub struct Candidate {
+    pub trace: Trace,
+    pub score: f64,
+    pub rationale: String,
+}
+
+fn contains_positive_hint(s: &str) -> bool {
+    let q = s.to_ascii_lowercase();
+    q.contains("positive") || q.contains("\u{2265}0") || q.contains(">=0") || q.contains("nonnegative")
+}
+
+fn contains_proper_hint(s: &str) -> bool {
+    let q = s.to_ascii_lowercase();
+    q.contains("proper") || q.contains("proper fraction")
+}
+
+fn contains_small_hint(s: &str) -> bool {
+    let q = s.to_ascii_lowercase();
+    q.contains("small") || q.contains("near") || q.contains("close") || q.contains("similar")
+}
+
+/// Deterministic multi-candidate compiler: natural-language-ish query -> candidate semtraces.
+/// Score: lower is better. All candidates are fully auditable.
+pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Err(anyhow!("empty query"));
+    }
+
+    // QE (fractions) candidates
+    if let Some(fr) = first_frac(q) {
+        let max_items = parse_max_items(q).unwrap_or(20);
+        let include_witness = contains_include_witness(q);
+        let want_den_le_6 = contains_den_le_6(q);
+        let want_positive = contains_positive_hint(q);
+        let want_proper = contains_proper_hint(q);
+        let want_small = contains_small_hint(q);
+
+        let mut base_ops: Vec<Op> = Vec::new();
+        base_ops.push(Op::StartElem { elem: fr.clone() });
+        if want_den_le_6 {
+            base_ops.push(Op::SetBit { i: 2, b: 1 });
+        }
+        base_ops.push(Op::WitnessNearest { target_elem: fr.clone(), metric: "ABS_DIFF".to_string() });
+        base_ops.push(Op::ReturnSet { max_items, include_witness });
+
+        let base = Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops: base_ops.clone() };
+
+        let mut out: Vec<Candidate> = Vec::new();
+
+        // Candidate 0: literal (only explicit constraints)
+        out.push(Candidate {
+            trace: base.clone(),
+            score: 0.0,
+            rationale: "literal: only explicit constraints".to_string(),
+        });
+
+        // Candidate 1: +positive if hinted OR if user said similar/close (common intent)
+        if want_positive || want_small {
+            let mut ops = base_ops.clone();
+            // Insert SET_BIT after START_ELEM (bit 0 = positive)
+            ops.insert(1, Op::SetBit { i: 0, b: 1 });
+            out.push(Candidate {
+                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                score: 0.10,
+                rationale: "intent: prefer positive fractions (bit0=1)".to_string(),
+            });
+        }
+
+        // Candidate 2: +proper if hinted OR if user said similar/close (common intent)
+        if want_proper || want_small {
+            let mut ops = base_ops.clone();
+            ops.insert(1, Op::SetBit { i: 5, b: 1 }); // proper
+            out.push(Candidate {
+                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                score: 0.15,
+                rationale: "intent: prefer proper fractions (bit5=1)".to_string(),
+            });
+        }
+
+        // Candidate 3: +small numerator magnitude if hinted OR if user said similar/close
+        if want_small {
+            let mut ops = base_ops.clone();
+            ops.insert(1, Op::SetBit { i: 6, b: 1 }); // num_abs<=5
+            out.push(Candidate {
+                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                score: 0.20,
+                rationale: "intent: prefer small numerator magnitude (bit6=1)".to_string(),
+            });
+        }
+
+        // Candidate 4: combined common intent: positive + proper (+ optional den<=6 already in base)
+        if want_small {
+            let mut ops = base_ops.clone();
+            // insert in deterministic order after START_ELEM
+            ops.insert(1, Op::SetBit { i: 0, b: 1 });
+            ops.insert(2, Op::SetBit { i: 5, b: 1 });
+            out.push(Candidate {
+                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                score: 0.25,
+                rationale: "intent: prefer positive + proper (bit0=1, bit5=1)".to_string(),
+            });
+        }
+
+        return Ok(out);
+    }
+
+    // BOOLFUN candidates (small subset)
+    let ql = q.to_ascii_lowercase();
+    if ql.contains("boolfun") {
+        let mut n: Option<u8> = None;
+        let mut target: Option<String> = None;
+        let mut k: Option<usize> = None;
+
+        if let Some(pos) = ql.find("n=") {
+            let start = pos + 2;
+            let mut end = start;
+            let b = ql.as_bytes();
+            while end < b.len() && b[end].is_ascii_digit() { end += 1; }
+            if end > start {
+                if let Ok(v) = ql[start..end].parse::<u8>() { n = Some(v); }
+            }
+        }
+
+        if let Some(pos) = ql.find("target=") {
+            let start = pos + "target=".len();
+            let mut end = start;
+            let b = q.as_bytes();
+            while end < b.len() && !b[end].is_ascii_whitespace() { end += 1; }
+            if end > start { target = Some(q[start..end].to_string()); }
+        }
+
+        if let Some(pos) = ql.find("k=") {
+            let start = pos + 2;
+            let mut end = start;
+            let b = ql.as_bytes();
+            while end < b.len() && b[end].is_ascii_digit() { end += 1; }
+            if end > start {
+                if let Ok(v) = ql[start..end].parse::<usize>() { k = Some(v); }
+            }
+        }
+
+        if k.is_none() { k = parse_max_items(q); }
+
+        let n = n.ok_or_else(|| anyhow!("BOOLFUN compile requires n=..."))?;
+        let target = target.ok_or_else(|| anyhow!("BOOLFUN compile requires target=..."))?;
+        let k = k.unwrap_or(10);
+
+        let ops: Vec<Op> = vec![
+            Op::SelectUniverse { universe: "BOOLFUN".to_string(), n },
+            Op::TopK { target_elem: target, k },
+            Op::ReturnSet { max_items: k, include_witness: true },
+        ];
+
+        return Ok(vec![Candidate {
+            trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "BOOLFUN".to_string(), bits: 7, ops },
+            score: 0.0,
+            rationale: "literal: BOOLFUN requires explicit n and target".to_string(),
+        }]);
+    }
+
+    Err(anyhow!("unable to deterministically compile query; provide explicit JSON ops"))
+}
+
+
 fn first_frac(s: &str) -> Option<String> {
     // deterministic, no regex dependency: scan for digit+/digit+
     // Accepts patterns like "7/200" anywhere in the string.

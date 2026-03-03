@@ -28,6 +28,8 @@ pub enum Op {
     WitnessNearest { target_elem: String, metric: String },
     #[serde(rename="RETURN_SET")]
     ReturnSet { max_items: usize, include_witness: bool },
+    #[serde(rename="JOIN_NEAREST")]
+    JoinNearest { left_universe: String, right_universe: String, left_elem: String, right_elem: String, metric: String },
 }
 
 #[allow(dead_code)]
