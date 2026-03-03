@@ -266,6 +266,18 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                   if metric != "ABS_DIFF" && metric != "HAMMING" {
                       return Err(anyhow!("unsupported join metric: {}", metric));
                   }
+
+                  // If caller starts with JOIN_NEAREST (no prior SELECT_UNIVERSE/LOAD), treat it as an implied QE seed.
+                  let left_universe = rec.args.get("left_universe").and_then(|v| v.as_str()).unwrap_or("");
+                  if !is_boolfun && state_set.is_empty() && left_universe.eq_ignore_ascii_case("QE") {
+                      is_boolfun = false;
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      witness_bf = None;
+                      state_set = qe.clone();
+                      set_digest = canonical_set_digest(&state_set);
+                  }
+
                   let left = rec.args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
                   if is_boolfun {
                       let bf = parse_boolfun(left).ok_or_else(|| anyhow!("bad left_elem"))?;

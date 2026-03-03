@@ -173,15 +173,27 @@ fn main() -> Result<()> {
     
     // Run the trace through the verifier
     let result = exec::run_trace_and_write(&trace_ops, trace_path.as_deref(), cli.verbose)?;
-    // Extract reference from ops (JSON-only mode)
-    let reference = if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
-        let parts: Vec<&str> = start_op.split_whitespace().collect();
-        if parts.len() >= 2 { parts[1].to_string() } else { "13/37".to_string() }
-    } else {
-        "13/37".to_string()
-    };
-    
-    // Parse reference as f64 (only if it is actually a fraction)
+    // Extract reference (prefer LOAD; else WITNESS_NEAREST target_elem=; else JOIN_NEAREST left_elem=)
+      fn extract_kv(op: &str, key: &str) -> Option<String> {
+          for tok in op.split_whitespace() {
+              if let Some(rest) = tok.strip_prefix(&(key.to_string() + "=")) {
+                  return Some(rest.to_string());
+              }
+          }
+          None
+      }
+
+      let reference = if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
+          start_op.split_whitespace().nth(1).unwrap_or("13/37").to_string()
+      } else if let Some(wop) = trace_ops.iter().find(|op| op.starts_with("WITNESS_NEAREST")) {
+          extract_kv(wop, "target_elem").unwrap_or_else(|| "13/37".to_string())
+      } else if let Some(jop) = trace_ops.iter().find(|op| op.starts_with("JOIN_NEAREST")) {
+          extract_kv(jop, "left_elem").unwrap_or_else(|| "13/37".to_string())
+      } else {
+          "13/37".to_string()
+      };
+
+      // Parse reference as f64 (only if it is actually a fraction)
       let (ref_value, reference_is_frac) = if reference.contains("/") {
           let ref_parts: Vec<&str> = reference.split("/").collect();
           if ref_parts.len() == 2 {

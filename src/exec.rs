@@ -566,6 +566,18 @@ pub fn run_trace_and_write(
                   if metric != "ABS_DIFF" && metric != "HAMMING" {
                       return Err(anyhow!("unsupported join metric: {}", metric));
                   }
+
+                  // If caller starts with JOIN_NEAREST (no prior SELECT_UNIVERSE/LOAD), treat it as an implied QE seed.
+                  let left_universe = args.get("left_universe").and_then(|v| v.as_str()).unwrap_or("");
+                  if !is_boolfun && state_set.is_empty() && left_universe.eq_ignore_ascii_case("QE") {
+                      is_boolfun = false;
+                      is_ge = false;
+                      cst = Constraint::empty();
+                      witness_bf = None;
+                      state_set = qe.clone();
+                      set_digest = canonical_set_digest(&state_set);
+                  }
+
                   let left = args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem"))?;
                   if is_boolfun {
                       let bf = parse_boolfun(left).ok_or_else(|| anyhow!("bad left_elem"))?;
