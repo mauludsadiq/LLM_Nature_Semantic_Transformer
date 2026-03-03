@@ -109,7 +109,18 @@ fn main() -> Result<()> {
                           let metric = opv.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
                           out.push(format!("WITNESS_NEAREST target_elem={} metric={}", target, metric));
                       }
-                      other => return Err(anyhow!("unsupported op in JSON: {}", other)),
+                        "JOIN_NEAREST" => {
+                            let lu = opv.get("left_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe"))?;
+                            let ru = opv.get("right_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe"))?;
+                            let le = opv.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem"))?;
+                            let re = opv.get("right_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem"))?;
+                            let metric = opv.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
+                            out.push(format!(
+                                "JOIN_NEAREST left_universe={} right_universe={} left_elem={} right_elem={} metric={}",
+                                lu, ru, le, re, metric
+                            ));
+                        }
+                        other => return Err(anyhow!("unsupported op in JSON: {}", other)),
                   }
               }
               out
