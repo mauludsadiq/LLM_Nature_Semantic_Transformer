@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use llm_nature_semantic_transformer::exec;
-use llm_nature_semantic_transformer::gpt2::GPT2Proposer;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -88,18 +87,8 @@ fn main() -> Result<()> {
         
         (ops, Some(trace_path))
     } else {
-        // Use GPT-2 proposer
-        let proposer = GPT2Proposer::new(cli.verbose)?;
-        
-        let trace_ops = proposer.generate_trace(&cli.query)?;
-        
-        // PROPOSER OPS are now only printed in generate_trace when verbose is true
-        // No duplicate printing here
-        
-        // Write trace to file
-        let trace_path = exec::write_trace_to_file(&trace_ops, &cli.query)?;
-        (trace_ops, Some(trace_path))
-    };
+          return Err(anyhow!("non-JSON query input is disabled (GPT-2 proposer removed); pass a JSON trace with ops"));
+      };
     
     // Run the trace through the verifier
     let result = exec::run_trace_and_write(&trace_ops, trace_path.as_deref(), cli.verbose)?;
