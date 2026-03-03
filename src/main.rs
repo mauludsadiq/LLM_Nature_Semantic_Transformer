@@ -23,6 +23,44 @@ fn main() -> Result<()> {
     let is_json = cli.query.trim().starts_with('{') || cli.query.trim().starts_with('[');
     
     // For JSON input, bypass proposer
+
+    // Explicit-ops mode: allow passing a space-separated op script directly (no NL compiler).
+    // Example: JOIN_NEAREST ... RETURN_SET ...
+    let qtrim = cli.query.trim();
+    let qfirst = qtrim.split_whitespace().next().unwrap_or("");
+    let _is_explicit_ops = !is_json && matches!(
+        qfirst,
+        "LOAD" | "MASK_BIT" | "SELECT_UNIVERSE" | "FILTER_WEIGHT" | "TOPK" | "WITNESS_NEAREST" | "RETURN_SET" | "JOIN_NEAREST"
+    );
+
+    fn split_explicit_ops(script: &str) -> Vec<String> {
+        let keywords = [
+            "LOAD",
+            "MASK_BIT",
+            "SELECT_UNIVERSE",
+            "FILTER_WEIGHT",
+            "TOPK",
+            "WITNESS_NEAREST",
+            "RETURN_SET",
+            "JOIN_NEAREST",
+        ];
+        let mut out: Vec<String> = Vec::new();
+        let mut cur: Vec<String> = Vec::new();
+        for tok in script.split_whitespace() {
+            if keywords.contains(&tok) {
+                if !cur.is_empty() {
+                    out.push(cur.join(" "));
+                    cur.clear();
+                }
+            }
+            cur.push(tok.to_string());
+        }
+        if !cur.is_empty() {
+            out.push(cur.join(" "));
+        }
+        out
+    }
+
     let (trace_ops, trace_path) = if is_json {
         // Parse and validate JSON
         let json_value: Value = serde_json::from_str(&cli.query)?;
@@ -86,7 +124,10 @@ fn main() -> Result<()> {
         fs::write(&trace_path, &cli.query)?;
         
         (ops, Some(trace_path))
-    } else {
+      } else if _is_explicit_ops {
+          // Treat the input as a space-separated op script (already explicit, no NL compiler).
+          (split_explicit_ops(qtrim), None)
+      } else {
         // Deterministic, auditable compiler for a small NL subset (no ML proposer)
         let t = llm_nature_semantic_transformer::compiler::compile_query_to_trace(&cli.query)?;
         let mut out: Vec<String> = Vec::with_capacity(t.ops.len());
