@@ -104,7 +104,7 @@ fn main() -> Result<()> {
         }
     } else {
         // For JSON, try to find START_ELEM
-        if let Some(start_op) = trace_ops.iter().find(|op| op.contains("START_ELEM")) {
+        if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
             let parts: Vec<&str> = start_op.split_whitespace().collect();
             if parts.len() >= 2 {
                 parts[1].to_string()
