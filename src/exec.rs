@@ -347,9 +347,9 @@ pub fn run_trace_and_write(
                 let u_norm = u.to_ascii_uppercase();
 
                 is_boolfun = matches!(u_norm.as_str(),
-                      "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
-                      "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
-                  );
+                    "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
+                    "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
+                );
                 if !is_boolfun {
                     return Err(anyhow!("unsupported universe: {}", u));
                 }
