@@ -92,28 +92,12 @@ fn main() -> Result<()> {
     
     // Run the trace through the verifier
     let result = exec::run_trace_and_write(&trace_ops, trace_path.as_deref(), cli.verbose)?;
-    
-    // Extract reference fraction from query or ops
-    let reference = if !is_json {
-        // For natural language, extract from query
-        let re = regex::Regex::new(r"(\d+/\d+)").unwrap();
-        if let Some(caps) = re.captures(&cli.query) {
-            caps[1].to_string()
-        } else {
-            "13/37".to_string()
-        }
+    // Extract reference from ops (JSON-only mode)
+    let reference = if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
+        let parts: Vec<&str> = start_op.split_whitespace().collect();
+        if parts.len() >= 2 { parts[1].to_string() } else { "13/37".to_string() }
     } else {
-        // For JSON, try to find START_ELEM
-        if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
-            let parts: Vec<&str> = start_op.split_whitespace().collect();
-            if parts.len() >= 2 {
-                parts[1].to_string()
-            } else {
-                "13/37".to_string()
-            }
-        } else {
-            "13/37".to_string()
-        }
+        "13/37".to_string()
     };
     
     // Parse reference as f64 (only if it is actually a fraction)
