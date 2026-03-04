@@ -10,3 +10,4 @@ pub mod word;
 pub mod phoneme;
 pub mod syllable;
 pub mod morpheme;
+pub mod phrase;
