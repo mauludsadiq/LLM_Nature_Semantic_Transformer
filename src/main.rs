@@ -270,7 +270,20 @@ fn main() -> Result<()> {
     // Run the trace through the verifier
     let result = exec::run_trace_and_write(&trace_ops, trace_path.as_deref(), cli.verbose)?;
     // Extract reference (prefer LOAD; else PROJECT_SIGNATURE elem=; else WITNESS_NEAREST target_elem=; else JOIN_NEAREST left_elem=)
-    fn extract_kv(op: &str, key: &str) -> Option<String> {
+    fn describe_constraint_qe(mask: u8, value: u8) -> String {
+    let legend = ["positive", "rat_int", "den<=6", "num_even", "den_mod3", "proper", "num_abs<=5"];
+    let parts: Vec<String> = (0..7u8)
+        .filter(|&i| (mask >> i) & 1 == 1)
+        .map(|i| format!("{}={}", legend[i as usize], (value >> i) & 1))
+        .collect();
+    if parts.is_empty() {
+        "unconstrained".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn extract_kv(op: &str, key: &str) -> Option<String> {
         for tok in op.split_whitespace() {
             if let Some(rest) = tok.strip_prefix(&(key.to_string() + "=")) {
                 return Some(rest.to_string());
@@ -361,9 +374,15 @@ fn main() -> Result<()> {
         println!("Total matching: {}", result.final_count);
     } else if reference_is_frac && witness_is_frac {
         // Fraction/QE narrative
+        let constraint_desc = if result.universe == "QE" {
+            describe_constraint_qe(result.constraint_mask, result.constraint_value)
+        } else {
+            format!("universe={}", result.universe)
+        };
         println!(
-              "Answer: Closest fraction to {} with den ≤ 6 is {} (diff ≈ {:.4}). Total: {}. Verified.",
+              "Answer: Closest fraction to {} ({}) is {} (diff ≈ {:.4}). Total: {}. Verified.",
               reference,
+              constraint_desc,
               witness,
               diff,
               result.final_count

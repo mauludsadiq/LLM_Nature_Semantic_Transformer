@@ -20,6 +20,9 @@ pub struct ExecutionResult {
     pub final_count: usize,
     pub witness: Option<String>,
     pub artifacts_path: Option<PathBuf>,
+    pub universe: String,
+    pub constraint_mask: u8,
+    pub constraint_value: u8,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -401,6 +404,7 @@ pub fn run_trace_and_write(
 
     let mut state_set: Vec<Frac> = Vec::new();
     let mut cst = Constraint::empty();
+    let mut active_universe: String = "QE".to_string();
     let mut set_digest: [u8; 32] = sha256_bytes(b"");
     let mut witness: Option<Frac> = None;
     let mut witness_bf: Option<BoolFun> = None;
@@ -443,6 +447,7 @@ pub fn run_trace_and_write(
                 let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
                 let u_norm = u.to_ascii_uppercase();
+                active_universe = u_norm.clone();
 
                 // BOOLFUN
                 if is_boolfun_universe(u_norm.as_str()) {
@@ -866,6 +871,9 @@ pub fn run_trace_and_write(
         },
         witness: witness_s,
         artifacts_path: Some(artifacts_dir),
+        universe: active_universe.clone(),
+        constraint_mask: cst.mask,
+        constraint_value: cst.value,
     })
 }
 
