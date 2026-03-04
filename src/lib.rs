@@ -6,3 +6,4 @@ pub mod geom;
 pub mod qe;
 pub mod semtrace;
 pub mod verify;
+pub mod word;
