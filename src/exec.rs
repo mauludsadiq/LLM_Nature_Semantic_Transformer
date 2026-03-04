@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[allow(unused_imports)]
+use crate::word::{build_word_universe, canonical_cmp as word_canonical_cmp, is_word_universe, sig_distance, Word};
 use crate::boolfun::{
     build_boolfun, canonical_cmp as boolfun_canonical_cmp, is_boolfun_universe,
     parse_elem as parse_boolfun, BoolFun,
@@ -411,6 +412,12 @@ pub fn run_trace_and_write(
     let mut witness_bf: Option<BoolFun> = None;
     let mut is_ge: bool = false;
 
+    let mut word_all: Vec<Word> = Vec::new();
+    let mut word_set: Vec<Word> = Vec::new();
+    let mut is_word: bool = false;
+    let mut witness_word: Option<Word> = None;
+    let _ = &witness_word; // read via is_word branches below
+
     let mut chain: [u8; 32] = sha256_bytes(b"");
 
     // RETURN_SET params for result output
@@ -472,6 +479,25 @@ pub fn run_trace_and_write(
                     set_digest = canonical_set_digest(&state_set);
                     witness = None;
                     witness_bf = None;
+                } else if is_word_universe(u_norm.as_str()) {
+                    is_boolfun = false;
+                    is_ge = false;
+                    is_word = true;
+                    cst = Constraint::empty();
+                    state_set.clear();
+                    if word_all.is_empty() {
+                        word_all = build_word_universe();
+                    }
+                    word_set = word_all.clone();
+                    set_digest = {
+                        let leaves: Vec<[u8; 32]> = word_set.iter()
+                            .map(|w| sha256_bytes(&w.canonical_bytes()))
+                            .collect();
+                        crate::digest::merkle_root(&leaves)
+                    };
+                    witness = None;
+                    witness_bf = None;
+                    witness_word = None;
                 } else {
                     return Err(anyhow!("unsupported universe: {}", u));
                 }
@@ -630,30 +656,41 @@ pub fn run_trace_and_write(
                     .get("metric")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("bad args for WITNESS_NEAREST"))?;
-                if metric != "ABS_DIFF" {
+                if is_word && metric == "HAMMING_SIG" {
+                    // Word universe: nearest by signature Hamming distance
+                    let t_text = target.trim().to_ascii_lowercase();
+                    let t_word = word_all.iter().find(|w| w.text == t_text)
+                        .cloned()
+                        .or_else(|| crate::word::parse_elem(&t_text))
+                        .ok_or_else(|| anyhow!("word not found: {}", target))?;
+                    let best = word_set.iter()
+                        .min_by_key(|w| sig_distance(w, &t_word))
+                        .cloned()
+                        .ok_or_else(|| anyhow!("empty word set"))?;
+                    witness_word = Some(best);
+                } else if metric == "ABS_DIFF" {
+                    let t: Frac = if is_ge || target.contains(',') {
+                        let parts: Vec<&str> = target
+                            .split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if parts.len() != 3 {
+                            return Err(anyhow!("bad tri target"));
+                        }
+                        let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri target"))?;
+                        let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri target"))?;
+                        let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri target"))?;
+                        crate::geom::Tri::new(a, b, c).ok_or_else(|| anyhow!("bad tri target"))?;
+                        Frac { num: a, den: c }
+                    } else {
+                        parse_frac(target).ok_or_else(|| anyhow!("bad frac target"))?
+                    };
+                    let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
+                    witness = Some(w);
+                } else {
                     return Err(anyhow!("unsupported metric: {}", metric));
                 }
-
-                let t: Frac = if is_ge || target.contains(',') {
-                    let parts: Vec<&str> = target
-                        .split(',')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if parts.len() != 3 {
-                        return Err(anyhow!("bad tri target"));
-                    }
-                    let a: i32 = parts[0].parse().map_err(|_| anyhow!("bad tri target"))?;
-                    let b: i32 = parts[1].parse().map_err(|_| anyhow!("bad tri target"))?;
-                    let c: i32 = parts[2].parse().map_err(|_| anyhow!("bad tri target"))?;
-                    crate::geom::Tri::new(a, b, c).ok_or_else(|| anyhow!("bad tri target"))?;
-                    Frac { num: a, den: c }
-                } else {
-                    parse_frac(target).ok_or_else(|| anyhow!("bad frac target"))?
-                };
-
-                let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
-                witness = Some(w);
             }
             "PROJECT_SIGNATURE" => {
                 let elem = args
@@ -778,6 +815,8 @@ pub fn run_trace_and_write(
 
     let witness_s = if is_boolfun {
         witness_bf.as_ref().map(boolfun_to_string)
+    } else if is_word {
+        witness_word.as_ref().map(|w| w.text.clone())
     } else {
         witness.as_ref().map(frac_to_string)
     };
@@ -832,7 +871,7 @@ pub fn run_trace_and_write(
         "verdict": if set_nonempty { "OK" } else { "EMPTY_SET" },
         "verifier": { "valid": replay_ok },
         "chain_hash": hex32(chain),
-        "count": if is_boolfun { boolfun_set.len() } else { state_set.len() },
+        "count": if is_boolfun { boolfun_set.len() } else if is_word { word_set.len() } else { state_set.len() },
         "witness": witness_s,
         "constraint": { "mask": cst.mask, "value": cst.value },
         "return_set": { "max_items": want_max_items, "include_witness": want_include_witness },
@@ -867,6 +906,8 @@ pub fn run_trace_and_write(
         valid: verdict_ok,
         final_count: if is_boolfun {
             boolfun_set.len()
+        } else if is_word {
+            word_set.len()
         } else {
             state_set.len()
         },
@@ -929,4 +970,18 @@ mod tests {
         assert_eq!(result.witness.as_deref(), Some("u64:71"),
             "sig7(3/1) should be 71");
     }
+    #[test]
+    fn word_universe_witness_nearest() {
+        let ops = vec![
+            "SELECT_UNIVERSE universe=WORD n=0".to_string(),
+            "WITNESS_NEAREST target_elem=abandon metric=HAMMING_SIG".to_string(),
+            "RETURN_SET max_items=5 include_witness=1".to_string(),
+        ];
+        let result = run_trace_and_write(&ops, None, false).unwrap();
+        assert!(result.valid, "execution must verify");
+        assert!(result.witness.is_some(), "must have a witness");
+        // abandon is in the universe so distance=0, witness=abandon itself
+        assert_eq!(result.witness.as_deref(), Some("abandon"));
+    }
+
 }

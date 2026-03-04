@@ -1,3 +1,4 @@
+use crate::word::{build_word_universe, is_word_universe, sig_distance, Word};
 use crate::boolfun::{
     build_boolfun, canonical_cmp as boolfun_canonical_cmp, is_boolfun_universe,
     parse_elem as parse_boolfun, BoolFun,
@@ -139,6 +140,11 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let mut witness: Option<Frac> = None;
     let mut witness_bf: Option<BoolFun> = None;
     let mut is_ge: bool = false;
+    let mut word_all: Vec<Word> = Vec::new();
+    let mut word_set: Vec<Word> = Vec::new();
+    let mut is_word: bool = false;
+    let mut witness_word: Option<Word> = None;
+    let _ = &witness_word; // read via is_word branches
 
     let mut chain: [u8; 32] = sha256_bytes(b"");
 
@@ -183,6 +189,25 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                     set_digest = canonical_set_digest(&state_set);
                     witness = None;
                     witness_bf = None;
+                } else if is_word_universe(u_norm.as_str()) {
+                    is_boolfun = false;
+                    is_ge = false;
+                    is_word = true;
+                    cst = Constraint::empty();
+                    state_set.clear();
+                    if word_all.is_empty() {
+                        word_all = build_word_universe();
+                    }
+                    word_set = word_all.clone();
+                    set_digest = {
+                        let leaves: Vec<[u8; 32]> = word_set.iter()
+                            .map(|w| crate::digest::sha256_bytes(&w.canonical_bytes()))
+                            .collect();
+                        crate::digest::merkle_root(&leaves)
+                    };
+                    witness = None;
+                    witness_bf = None;
+                    witness_word = None;
                 } else {
                     return Ok(false);
                 }
@@ -341,9 +366,20 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                     .get("metric")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("bad args"))?;
-                if metric != "ABS_DIFF" {
+                if is_word && metric == "HAMMING_SIG" {
+                    let t_text = target.trim().to_ascii_lowercase();
+                    let t_word = word_all.iter().find(|w| w.text == t_text)
+                        .cloned()
+                        .or_else(|| crate::word::parse_elem(&t_text))
+                        .ok_or_else(|| anyhow!("word not found: {}", target))?;
+                    let best = word_set.iter()
+                        .min_by_key(|w| sig_distance(w, &t_word))
+                        .cloned()
+                        .ok_or_else(|| anyhow!("empty word set"))?;
+                    witness_word = Some(best);
+                } else if metric != "ABS_DIFF" {
                     return Ok(false);
-                }
+                } else {
                 let t: Frac = if is_ge || target.contains(",") {
                     let parts: Vec<&str> = target
                         .split(",")
@@ -365,6 +401,7 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 };
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty"))?;
                 witness = Some(w);
+                } // end ABS_DIFF branch
             }
             "PROJECT_SIGNATURE" => {
                 let elem = rec
