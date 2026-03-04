@@ -346,7 +346,20 @@ fn main() -> Result<()> {
 
     println!("\nQuery: {}", cli.query);
 
-    if reference_is_frac && witness_is_frac {
+    let is_join = trace_ops.iter().any(|op| op.starts_with("JOIN_NEAREST"));
+    let join_right_elem = trace_ops.iter()
+        .find_map(|op| if op.starts_with("JOIN_NEAREST") { extract_kv(op, "right_elem") } else { None })
+        .unwrap_or_default();
+    if is_join {
+        println!(
+            "Answer: Nearest QE fraction to {} matching BOOLFUN signature {} is {} (diff ≈ {:.4}). Total: {}. Verified.",
+            reference, join_right_elem, witness, diff, result.final_count
+        );
+        println!();
+        println!("Reference: {} ≈ {:.5}", reference, ref_value);
+        println!("Witness: {} ≈ {:.5}", witness, witness_value);
+        println!("Total matching: {}", result.final_count);
+    } else if reference_is_frac && witness_is_frac {
         // Fraction/QE narrative
         println!(
               "Answer: Closest fraction to {} with den ≤ 6 is {} (diff ≈ {:.4}). Total: {}. Verified.",
