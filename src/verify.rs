@@ -174,7 +174,7 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                     set_digest = canonical_set_digest_boolfun(&boolfun_set);
                     witness = None;
                     witness_bf = None;
-                                } else if u_norm == "QE" {
+                } else if u_norm == "QE" {
                     // switch universe -> QE
                     is_boolfun = false;
                     is_ge = false;
@@ -183,7 +183,7 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                     set_digest = canonical_set_digest(&state_set);
                     witness = None;
                     witness_bf = None;
-                                } else {
+                } else {
                     return Ok(false);
                 }
             }

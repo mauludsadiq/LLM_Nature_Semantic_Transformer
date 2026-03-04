@@ -536,7 +536,7 @@ pub fn run_trace_and_write(
                 let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
                 boolfun_set = top;
                 boolfun_set.sort_by(boolfun_canonical_cmp);
-                  set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                set_digest = canonical_set_digest_boolfun(&boolfun_set);
                 witness_bf = boolfun_set.get(0).copied();
             }
 
