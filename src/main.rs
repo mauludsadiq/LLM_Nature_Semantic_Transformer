@@ -14,10 +14,61 @@ struct Cli {
     /// Verbose output with debug details
     #[arg(short, long)]
     verbose: bool,
+
+    /// Show all ranked candidates instead of executing the top one
+    #[arg(short, long)]
+    candidates: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Candidates mode: compile and rank all candidate traces, print and exit
+    if cli.candidates {
+        use llm_nature_semantic_transformer::semtrace::{Constraint, Op, sig7};
+        use llm_nature_semantic_transformer::qe::build_qe;
+        let qe = build_qe();
+        let universe_size = qe.len() as f64;
+
+        let mut cands = llm_nature_semantic_transformer::compiler::compile_query_to_candidates(&cli.query)?;
+        if cands.is_empty() {
+            println!("No candidates generated for query.");
+            return Ok(());
+        }
+
+        // Score each candidate by selectivity: 1.0 - (matching / total)
+        // Tighter constraint = fewer matches = lower score = preferred
+        for c in cands.iter_mut() {
+            let mut cst = Constraint::empty();
+            for op in &c.trace.ops {
+                if let Op::SetBit { i, b } = op {
+                    cst = cst.set_bit(*i, *b);
+                }
+            }
+            let matching = qe.iter().filter(|f| cst.matches(sig7(f))).count() as f64;
+            c.score = 1.0 - (matching / universe_size);
+        }
+        cands.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+
+        println!("\n{} candidate(s) for: {}\n", cands.len(), cli.query);
+        println!("{:<4} {:<10} {:<12} {}", "Rank", "Score", "Selectivity", "Rationale");
+        println!("{}", "-".repeat(70));
+        for (i, c) in cands.iter().enumerate() {
+            let matching = ((1.0 - c.score) * universe_size) as usize;
+            println!("{:<4} {:<10.4} {:<12} {}", i, c.score, format!("{}/{}", matching, qe.len()), c.rationale);
+        }
+        println!();
+        if cli.verbose {
+            for (i, c) in cands.iter().enumerate() {
+                println!("--- Candidate {} ops ---", i);
+                for op in &c.trace.ops {
+                    println!("  {:?}", op);
+                }
+                println!();
+            }
+        }
+        return Ok(());
+    }
 
     // Check if input is JSON (starts with { or [)
     let is_json = cli.query.trim().starts_with('{') || cli.query.trim().starts_with('[');
