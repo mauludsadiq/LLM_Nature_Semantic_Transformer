@@ -572,10 +572,16 @@ pub fn run_trace_and_write(
                         .collect();
                     v.sort_by(crate::qe::canonical_cmp);
                     state_set = v;
+                    set_digest = canonical_set_digest(&state_set);
+                    is_boolfun = false;
+                    witness_bf = None;
                     witness = Some(Frac { num: a, den: c });
                 } else {
                     let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
                     state_set = qe.clone();
+                    set_digest = canonical_set_digest(&state_set);
+                    is_boolfun = false;
+                    witness_bf = None;
                     witness = Some(f);
                 }
             }
