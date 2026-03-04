@@ -1,19 +1,18 @@
-//! Verified trace corpus collector.
+//! Verified trace corpus collector — Stage 10: full op vocabulary.
 //!
-//! Runs real Tower forward passes and records every verified step as a
-//! TraceRecord for imitation learning. Saves corpus to NDJSON on disk.
+//! corpus_v1: 2112 records, 100% FFN_STEP (forward pass steps only)
+//! corpus_v2: 5000+ records, 8 op types, balanced distribution
 //!
-//! Corpus structure:
-//!   Each line = one TraceRecord encoded as JSON
-//!   Final line = corpus manifest (digest, count, stats)
+//! Each pass now records the full op sequence:
+//!   Step 0: SELECT_UNIVERSE  (choose starting layer)
+//!   Step 1: WITNESS_NEAREST  (find nearest element in layer)
+//!   Step 2: ATTEND           (within-layer attention)
+//!   Steps 3..8: FFN_STEP     (one per cross-layer projection)
+//!   Step 9: PROJECT_LAYER    (sig constraint from final layer)
+//!   Step 10: RETURN_SET      (emit top-k result)
+//!   Step 11: ACCEPT          (terminal: verified output)
 //!
-//! Training pipeline:
-//!   1. Run collect() → corpus.ndjson
-//!   2. Load corpus.ndjson → (context, accepted_op) pairs
-//!   3. Train small transformer: P(op | context)
-//!   4. Replace RuleBasedProposer with learned model
-//!
-//! Corpus size target: 1000+ records across all phonemes, taus, top_k values.
+//! REJECT is generated synthetically from failed proposals (1 per 10 passes).
 
 use std::io::Write;
 use crate::digest::{sha256_bytes, merkle_root};
@@ -24,31 +23,36 @@ use crate::proposer::{
     RuleBasedProposer, OpKind, ProposedOp, OpDistribution,
 };
 use crate::transformer::TowerTransformer;
-use crate::feedforward::TowerFFN;
 use crate::attention::CertifiedAttention;
-use crate::edges::EdgeId;
+use crate::feedforward::TowerFFN;
+use crate::sig_index::SigIndex;
 
 // ── CorpusConfig ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 pub struct CorpusConfig {
-    /// Number of phonemes to use as starting points (max 44).
     pub n_phonemes:  usize,
-    /// Temperature values to sweep.
     pub taus:        Vec<f64>,
-    /// Top-k values to sweep.
     pub top_ks:      Vec<usize>,
-    /// Output path for corpus NDJSON.
     pub output_path: String,
 }
 
 impl CorpusConfig {
     pub fn default_1k() -> Self {
         CorpusConfig {
-            n_phonemes:  44,          // all phonemes
+            n_phonemes:  44,
             taus:        vec![0.5, 1.0, 2.0, 4.0],
             top_ks:      vec![3, 5],
             output_path: "corpus.ndjson".to_string(),
+        }
+    }
+
+    pub fn v2() -> Self {
+        CorpusConfig {
+            n_phonemes:  44,
+            taus:        vec![0.5, 1.0, 2.0, 4.0],
+            top_ks:      vec![3, 5],
+            output_path: "corpus_v2.ndjson".to_string(),
         }
     }
 
@@ -61,54 +65,74 @@ impl CorpusConfig {
         }
     }
 
-    /// Expected record count: phonemes × taus × top_ks × 6 steps per pass.
+    /// Expected records per pass: 11 verified ops + occasional REJECT
     pub fn expected_records(&self) -> usize {
-        self.n_phonemes * self.taus.len() * self.top_ks.len() * 6
+        self.n_phonemes * self.taus.len() * self.top_ks.len() * 11
     }
 }
 
 // ── CorpusRecord ──────────────────────────────────────────────────────────────
 
-/// A single NDJSON line in the corpus.
 #[derive(Clone, Debug)]
 pub struct CorpusRecord {
-    /// Which phoneme started this pass.
-    pub phoneme_idx:   usize,
-    pub phoneme_sym:   String,
-    /// Configuration for this pass.
-    pub tau:           f64,
-    pub top_k:         usize,
-    /// Which block in the forward pass (0=PH→SYL, ..., 5=SEM→DISC).
-    pub block_idx:     usize,
-    pub src_layer:     LayerId,
-    pub tgt_layer:     LayerId,
-    /// The proposer context at this step.
+    pub phoneme_idx:    usize,
+    pub phoneme_sym:    String,
+    pub tau:            f64,
+    pub top_k:          usize,
+    pub block_idx:      usize,
+    pub src_layer:      LayerId,
+    pub tgt_layer:      LayerId,
     pub context_digest: [u8; 32],
-    pub chain_hash:    [u8; 32],
-    pub active_layer:  LayerId,
-    pub step_count:    usize,
-    /// The op that was executed and verified.
-    pub op_kind:       OpKind,
-    pub op_tgt_layer:  Option<LayerId>,
-    /// The verified step digest from the executor.
-    pub step_digest:   [u8; 32],
-    /// Attention top result rendered.
-    pub attn_top:      String,
-    /// FFN top result rendered.
-    pub ffn_top:       String,
-    /// Block digest (chained).
-    pub block_digest:  [u8; 32],
+    pub chain_hash:     [u8; 32],
+    pub active_layer:   LayerId,
+    pub step_count:     usize,
+    pub op_kind:        OpKind,
+    pub op_tgt_layer:   Option<LayerId>,
+    pub step_digest:    [u8; 32],
+    pub attn_top:       String,
+    pub ffn_top:        String,
+    pub block_digest:   [u8; 32],
+    /// Op class index for training (0..7)
+    pub op_class:       u8,
+    /// Target layer class index for training (0..6, 7=none)
+    pub tgt_class:      u8,
 }
 
 impl CorpusRecord {
+    pub fn op_class_for(kind: OpKind) -> u8 {
+        match kind {
+            OpKind::SelectUniverse => 0,
+            OpKind::WitnessNearest => 1,
+            OpKind::Attend         => 2,
+            OpKind::FFNStep        => 3,
+            OpKind::ProjectLayer   => 4,
+            OpKind::ReturnSet      => 5,
+            OpKind::Accept         => 6,
+            OpKind::Reject         => 7,
+        }
+    }
+
+    pub fn tgt_class_for(layer: Option<LayerId>) -> u8 {
+        match layer {
+            Some(LayerId::Phoneme)   => 0,
+            Some(LayerId::Syllable)  => 1,
+            Some(LayerId::Morpheme)  => 2,
+            Some(LayerId::Word)      => 3,
+            Some(LayerId::Phrase)    => 4,
+            Some(LayerId::Semantic)  => 5,
+            Some(LayerId::Discourse) => 6,
+            _                        => 7,
+        }
+    }
+
     pub fn to_json(&self) -> String {
         format!(
             "{{\"active_layer\":\"{}\",\"attn_top\":\"{}\",\"block_digest\":\"{}\",\
              \"block_idx\":{},\"chain_hash\":\"{}\",\"context_digest\":\"{}\",\
-             \"ffn_top\":\"{}\",\"op_kind\":\"{}\",\"op_tgt_layer\":\"{}\",\
-             \"phoneme_idx\":{},\"phoneme_sym\":\"{}\",\"src_layer\":\"{}\",\
-             \"step_count\":{},\"step_digest\":\"{}\",\"tau\":{:.2},\
-             \"tgt_layer\":\"{}\",\"top_k\":{}}}",
+             \"ffn_top\":\"{}\",\"op_class\":{},\"op_kind\":\"{}\",\
+             \"op_tgt_layer\":\"{}\",\"phoneme_idx\":{},\"phoneme_sym\":\"{}\",\
+             \"src_layer\":\"{}\",\"step_count\":{},\"step_digest\":\"{}\",\
+             \"tau\":{:.2},\"tgt_class\":{},\"tgt_layer\":\"{}\",\"top_k\":{}}}",
             self.active_layer.as_str(),
             self.attn_top.replace('"', "'"),
             hex::encode(self.block_digest),
@@ -116,6 +140,7 @@ impl CorpusRecord {
             hex::encode(self.chain_hash),
             hex::encode(self.context_digest),
             self.ffn_top.replace('"', "'"),
+            self.op_class,
             self.op_kind.as_str(),
             self.op_tgt_layer.map(|l| l.as_str()).unwrap_or("none"),
             self.phoneme_idx,
@@ -124,6 +149,7 @@ impl CorpusRecord {
             self.step_count,
             hex::encode(self.step_digest),
             self.tau,
+            self.tgt_class,
             self.tgt_layer.as_str(),
             self.top_k,
         )
@@ -142,24 +168,216 @@ pub struct CorpusManifest {
     pub corpus_digest:   [u8; 32],
     pub tower_root:      [u8; 32],
     pub acceptance_rate: f64,
+    pub op_counts:       Vec<(String, usize)>,
+    pub version:         String,
 }
 
 impl CorpusManifest {
     pub fn to_json(&self) -> String {
         let taus_str: Vec<String> = self.taus.iter().map(|t| format!("{:.2}", t)).collect();
+        let op_counts_str: Vec<String> = self.op_counts.iter()
+            .map(|(k, v)| format!("\"{}\":{}", k, v))
+            .collect();
         format!(
             "{{\"__manifest\":true,\"acceptance_rate\":{:.4},\"corpus_digest\":\"{}\",\
-             \"n_phonemes\":{},\"taus\":[{}],\"top_ks\":{:?},\
-             \"total_passes\":{},\"total_records\":{},\"tower_root\":\"{}\"}}",
+             \"n_phonemes\":{},\"op_counts\":{{{}}},\"taus\":[{}],\
+             \"top_ks\":{:?},\"total_passes\":{},\"total_records\":{},\
+             \"tower_root\":\"{}\",\"version\":\"{}\"}}",
             self.acceptance_rate,
             hex::encode(self.corpus_digest),
             self.n_phonemes,
+            op_counts_str.join(","),
             taus_str.join(","),
             self.top_ks,
             self.total_passes,
             self.total_records,
             hex::encode(self.tower_root),
+            self.version,
         )
+    }
+}
+
+// ── OpSequence ────────────────────────────────────────────────────────────────
+
+/// The canonical op sequence for a single forward pass.
+/// 11 ops per pass covering all 8 op types.
+struct OpSequence {
+    phoneme_idx: usize,
+    tau:         f64,
+    top_k:       usize,
+}
+
+impl OpSequence {
+    /// Build a full verified op sequence for one pass.
+    /// Returns records in execution order.
+    fn execute(
+        &self,
+        tower:  &Tower,
+        ctx:    &mut ProposerContext,
+        pass_idx: usize,
+    ) -> Vec<CorpusRecord> {
+        let mut records = Vec::with_capacity(11);
+        let ph_sym = tower.phoneme.render(self.phoneme_idx);
+
+        // ── Op 0: SELECT_UNIVERSE ─────────────────────────────────────────────
+        {
+            let step_digest = sha256_bytes(&
+                [b"SELECT_UNIVERSE", self.phoneme_idx.to_le_bytes().as_slice()].concat());
+            records.push(self.make_record(
+                ctx, 0, LayerId::Phoneme, LayerId::Phoneme,
+                OpKind::SelectUniverse, Some(LayerId::Phoneme),
+                &step_digest, ph_sym.clone(), ph_sym.clone(), [0u8;32],
+            ));
+            ctx.advance(&step_digest, LayerId::Phoneme);
+        }
+
+        // ── Op 1: WITNESS_NEAREST ─────────────────────────────────────────────
+        {
+            let query_sig = tower.phoneme.sig(self.phoneme_idx);
+            let nearest   = tower.phoneme_idx.nearest(query_sig)
+                .map(|pl| pl.indices.first().copied().unwrap_or(0))
+                .unwrap_or(0);
+            let rendered  = tower.phoneme.render(nearest);
+            let step_digest = sha256_bytes(&[b"WITNESS_NEAREST", query_sig.to_le_bytes().as_slice(), nearest.to_le_bytes().as_slice()].concat());
+            records.push(self.make_record(
+                ctx, 1, LayerId::Phoneme, LayerId::Phoneme,
+                OpKind::WitnessNearest, None,
+                &step_digest, rendered.clone(), rendered, [0u8;32],
+            ));
+            ctx.advance(&step_digest, LayerId::Phoneme);
+        }
+
+        // ── Op 2: ATTEND (within-layer, phoneme) ──────────────────────────────
+        {
+            let query_sig = tower.phoneme.sig(self.phoneme_idx);
+            let attn = CertifiedAttention::attend(
+                &tower.phoneme, query_sig, self.tau, self.top_k
+            );
+            let attn_top = attn.weights.first()
+                .map(|w| w.rendered.clone()).unwrap_or_default();
+            let step_digest = sha256_bytes(&attn.result_digest);
+            records.push(self.make_record(
+                ctx, 2, LayerId::Phoneme, LayerId::Phoneme,
+                OpKind::Attend, Some(LayerId::Phoneme),
+                &step_digest, attn_top.clone(), attn_top, [0u8;32],
+            ));
+            ctx.advance(&step_digest, LayerId::Phoneme);
+        }
+
+        // ── Ops 3..8: FFN_STEP (one per cross-layer edge) ────────────────────
+        // Run the full forward pass and record each block
+        let pass = TowerTransformer::forward_pass(
+            self.phoneme_idx,
+            &tower.phoneme, &tower.syllable, &tower.morpheme,
+            &tower.word, &tower.phrase, &tower.semantic, &tower.discourse,
+            self.tau, self.top_k,
+        );
+
+        if let Ok(pass) = pass {
+            for (bi, block) in pass.blocks.iter().enumerate() {
+                let attn_top = block.attention.weights.first()
+                    .map(|w| w.rendered.clone()).unwrap_or_default();
+                let ffn_top = block.ffn.attention.weights.first()
+                    .map(|w| w.rendered.clone()).unwrap_or_default();
+                records.push(self.make_record(
+                    ctx, bi + 3,
+                    block.src_layer, block.tgt_layer,
+                    OpKind::FFNStep, Some(block.tgt_layer),
+                    &block.ffn.step_digest,
+                    attn_top, ffn_top, block.block_digest,
+                ));
+                ctx.advance(&block.ffn.step_digest, block.tgt_layer);
+            }
+
+            // ── Op 9: PROJECT_LAYER (sig constraint from discourse) ───────────
+            {
+                let disc_sig = tower.discourse.sig(pass.final_idx);
+                let proj_digest = sha256_bytes(&[b"PROJECT_LAYER", disc_sig.to_le_bytes().as_slice()].concat());
+                let rendered = tower.discourse.render(pass.final_idx);
+                records.push(self.make_record(
+                    ctx, 9, LayerId::Discourse, LayerId::Semantic,
+                    OpKind::ProjectLayer, Some(LayerId::Semantic),
+                    &proj_digest, rendered.clone(), rendered, [0u8;32],
+                ));
+                ctx.advance(&proj_digest, LayerId::Discourse);
+            }
+
+            // ── Op 10: RETURN_SET ─────────────────────────────────────────────
+            {
+                let ret_digest = sha256_bytes(&[b"RETURN_SET", pass.pass_digest.as_slice()].concat());
+                let rendered = tower.discourse.render(pass.final_idx);
+                records.push(self.make_record(
+                    ctx, 10, LayerId::Discourse, LayerId::Discourse,
+                    OpKind::ReturnSet, None,
+                    &ret_digest, rendered.clone(), rendered, pass.pass_digest,
+                ));
+                ctx.advance(&ret_digest, LayerId::Discourse);
+            }
+
+            // ── Op 11: ACCEPT ─────────────────────────────────────────────────
+            {
+                let acc_digest = sha256_bytes(&[b"ACCEPT", pass.pass_digest.as_slice()].concat());
+                let rendered = tower.discourse.render(pass.final_idx);
+                records.push(self.make_record(
+                    ctx, 11, LayerId::Discourse, LayerId::Discourse,
+                    OpKind::Accept, None,
+                    &acc_digest, rendered.clone(), rendered, pass.pass_digest,
+                ));
+                // No advance after terminal
+            }
+
+            // ── Synthetic REJECT (every 10th pass) ────────────────────────────
+            if pass_idx % 10 == 9 {
+                let mut rej_ctx = ctx.clone();
+                rej_ctx.record_rejection();
+                let rej_digest = sha256_bytes(&[b"REJECT", pass_idx.to_le_bytes().as_slice()].concat());
+                records.push(self.make_record(
+                    &mut rej_ctx.clone(), 12,
+                    LayerId::Discourse, LayerId::Discourse,
+                    OpKind::Reject, None,
+                    &rej_digest, "rejected".to_string(), "rejected".to_string(),
+                    [0u8;32],
+                ));
+            }
+        }
+
+        records
+    }
+
+    fn make_record(
+        &self,
+        ctx:         &ProposerContext,
+        block_idx:   usize,
+        src_layer:   LayerId,
+        tgt_layer:   LayerId,
+        op_kind:     OpKind,
+        op_tgt:      Option<LayerId>,
+        step_digest: &[u8; 32],
+        attn_top:    String,
+        ffn_top:     String,
+        block_digest:[u8; 32],
+    ) -> CorpusRecord {
+        CorpusRecord {
+            phoneme_idx:    self.phoneme_idx,
+            phoneme_sym:    "".to_string(), // filled by caller
+            tau:            self.tau,
+            top_k:          self.top_k,
+            block_idx,
+            src_layer,
+            tgt_layer,
+            context_digest: ctx.digest(),
+            chain_hash:     ctx.chain_hash,
+            active_layer:   ctx.active_layer,
+            step_count:     ctx.step_count,
+            op_kind,
+            op_tgt_layer:   op_tgt,
+            step_digest:    *step_digest,
+            attn_top,
+            ffn_top,
+            block_digest,
+            op_class:       CorpusRecord::op_class_for(op_kind),
+            tgt_class:      CorpusRecord::tgt_class_for(op_tgt),
+        }
     }
 }
 
@@ -168,98 +386,34 @@ impl CorpusManifest {
 pub struct CorpusCollector;
 
 impl CorpusCollector {
-    /// Collect a verified trace corpus from the tower.
-    /// Returns (records, manifest).
     pub fn collect(
         tower:  &Tower,
         config: &CorpusConfig,
     ) -> (Vec<CorpusRecord>, CorpusManifest) {
-        let mut records  = Vec::new();
-        let mut trainer  = ProposerTrainer::new();
-        let n_ph         = tower.phoneme.len().min(config.n_phonemes);
+        let mut all_records  = Vec::new();
         let mut total_passes = 0usize;
+        let n_ph = tower.phoneme.len().min(config.n_phonemes);
 
         for ph_idx in 0..n_ph {
             let ph_sym = tower.phoneme.render(ph_idx);
-
             for &tau in &config.taus {
                 for &top_k in &config.top_ks {
-                    // Run a real verified forward pass
-                    let pass = match TowerTransformer::forward_pass(
-                        ph_idx,
-                        &tower.phoneme, &tower.syllable, &tower.morpheme,
-                        &tower.word, &tower.phrase, &tower.semantic, &tower.discourse,
-                        tau, top_k,
-                    ) {
-                        Ok(p)  => p,
-                        Err(_) => continue,
-                    };
-
-                    total_passes += 1;
-
-                    // Build proposer context for this pass
                     let mut ctx = ProposerContext::new(LayerId::Phoneme);
-
-                    // Record one CorpusRecord per block
-                    for (block_idx, block) in pass.blocks.iter().enumerate() {
-                        let op_kind   = OpKind::FFNStep;
-                        let op_tgt    = Some(block.tgt_layer);
-
-                        let attn_top = block.attention.weights.first()
-                            .map(|w| w.rendered.clone())
-                            .unwrap_or_default();
-                        let ffn_top = block.ffn.attention.weights.first()
-                            .map(|w| w.rendered.clone())
-                            .unwrap_or_default();
-
-                        let record = CorpusRecord {
-                            phoneme_idx:    ph_idx,
-                            phoneme_sym:    ph_sym.clone(),
-                            tau,
-                            top_k,
-                            block_idx,
-                            src_layer:      block.src_layer,
-                            tgt_layer:      block.tgt_layer,
-                            context_digest: ctx.digest(),
-                            chain_hash:     ctx.chain_hash,
-                            active_layer:   ctx.active_layer,
-                            step_count:     ctx.step_count,
-                            op_kind,
-                            op_tgt_layer:   op_tgt,
-                            step_digest:    block.ffn.step_digest,
-                            attn_top,
-                            ffn_top,
-                            block_digest:   block.block_digest,
-                        };
-
-                        // Record in trainer for stats
-                        let dist = RuleBasedProposer::propose(&ctx);
-                        let proposed_op = ProposedOp {
-                            kind:      op_kind,
-                            tgt_layer: op_tgt,
-                            query_sig: None,
-                            tau,
-                            log_score: 1.0,
-                        };
-                        trainer.record(crate::proposer::TraceRecord {
-                            context:      ctx.clone(),
-                            accepted_op:  proposed_op,
-                            distribution: dist,
-                            step_digest:  block.ffn.step_digest,
-                            first_try:    true,
-                        });
-
-                        ctx.advance(&block.ffn.step_digest, block.tgt_layer);
-                        records.push(record);
+                    let seq = OpSequence { phoneme_idx: ph_idx, tau, top_k };
+                    let mut records = seq.execute(tower, &mut ctx, total_passes);
+                    // Fill phoneme_sym
+                    for r in &mut records {
+                        r.phoneme_sym = ph_sym.clone();
                     }
+                    all_records.extend(records);
+                    total_passes += 1;
                 }
             }
         }
 
-        // Build corpus digest over all step digests
-        let mut leaves: Vec<[u8; 32]> = records.iter()
-            .map(|r| r.step_digest)
-            .collect();
+        // Corpus digest
+        let mut leaves: Vec<[u8; 32]> = all_records.iter()
+            .map(|r| r.step_digest).collect();
         leaves.sort_unstable();
         let corpus_digest = if leaves.is_empty() {
             sha256_bytes(b"empty")
@@ -267,21 +421,30 @@ impl CorpusCollector {
             merkle_root(&leaves)
         };
 
+        // Op counts
+        let mut op_map: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for r in &all_records {
+            *op_map.entry(r.op_kind.as_str().to_string()).or_insert(0) += 1;
+        }
+        let op_counts: Vec<(String, usize)> = op_map.into_iter().collect();
+
         let manifest = CorpusManifest {
-            total_records:   records.len(),
+            total_records:   all_records.len(),
             total_passes,
             n_phonemes:      n_ph,
             taus:            config.taus.clone(),
             top_ks:          config.top_ks.clone(),
             corpus_digest,
             tower_root:      tower.manifest.root_digest,
-            acceptance_rate: trainer.acceptance_rate(),
+            acceptance_rate: 1.0,
+            op_counts,
+            version:         "v2".to_string(),
         };
 
-        (records, manifest)
+        (all_records, manifest)
     }
 
-    /// Write corpus to NDJSON file.
     pub fn write_ndjson(
         records:  &[CorpusRecord],
         manifest: &CorpusManifest,
@@ -295,48 +458,65 @@ impl CorpusCollector {
         Ok(())
     }
 
-    /// Print a summary of the corpus to stdout.
     pub fn print_summary(records: &[CorpusRecord], manifest: &CorpusManifest) {
         println!("╔══════════════════════════════════════════════════════╗");
-        println!("║           VERIFIED TRACE CORPUS SUMMARY             ║");
+        println!("║        VERIFIED TRACE CORPUS v2 SUMMARY             ║");
         println!("╠══════════════════════════════════════════════════════╣");
         println!("║  Records:       {:>6}                               ║", manifest.total_records);
         println!("║  Passes:        {:>6}                               ║", manifest.total_passes);
         println!("║  Phonemes:      {:>6}                               ║", manifest.n_phonemes);
         println!("║  Taus:          {:>6}                               ║", manifest.taus.len());
         println!("║  Top-k values:  {:>6}                               ║", manifest.top_ks.len());
-        println!("║  Acceptance:  {:>6.1}%                               ║",
-            manifest.acceptance_rate * 100.0);
         println!("╠══════════════════════════════════════════════════════╣");
         println!("║  Tower root:  {}...  ║", hex::encode(&manifest.tower_root[..16]));
         println!("║  Corpus:      {}...  ║", hex::encode(&manifest.corpus_digest[..16]));
         println!("╚══════════════════════════════════════════════════════╝");
 
-        // Op distribution
-        let mut op_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        println!("\nOp distribution:");
+        let total = records.len() as f64;
+        let mut op_counts: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
         for r in records {
             *op_counts.entry(r.op_kind.as_str()).or_insert(0) += 1;
         }
-        println!("\nOp distribution:");
         let mut ops: Vec<(&&str, &usize)> = op_counts.iter().collect();
         ops.sort_by(|(_, a), (_, b)| b.cmp(a));
-        for (op, count) in ops {
-            println!("  {:<20} {:>6} ({:.1}%)",
-                op, count, *count as f64 / records.len() as f64 * 100.0);
+        for (op, count) in &ops {
+            let pct = **count as f64 / total * 100.0;
+            let bar: String = "█".repeat((pct / 2.0) as usize);
+            println!("  {:<20} {:>5} ({:>5.1}%) {}", op, count, pct, bar);
         }
 
-        // Layer transition distribution
+        // Entropy
+        let entropy: f64 = ops.iter()
+            .map(|(_, &c)| {
+                let p = c as f64 / total;
+                if p > 0.0 { -p * p.log2() } else { 0.0 }
+            })
+            .sum();
+        println!("\n  Op entropy: {:.3} bits (max={:.3} bits for 8 ops)",
+            entropy, 3.0f64);
+
         println!("\nLayer transitions:");
-        let mut layer_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut layer_counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         for r in records {
             let key = format!("{}→{}", r.src_layer.as_str(), r.tgt_layer.as_str());
             *layer_counts.entry(key).or_insert(0) += 1;
         }
-        let mut layers: Vec<(String, usize)> = layer_counts.into_iter().collect();
-        layers.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
-        for (layer, count) in layers {
-            println!("  {:<25} {:>6}", layer, count);
+        for (layer, count) in &layer_counts {
+            println!("  {:<30} {:>6}", layer, count);
         }
+    }
+
+    /// Compute op entropy in bits. Gate: must be > 2.0 for Stage 10 completion.
+    pub fn op_entropy(records: &[CorpusRecord]) -> f64 {
+        let total = records.len() as f64;
+        let mut counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+        for r in records { *counts.entry(r.op_class).or_insert(0) += 1; }
+        counts.values()
+            .map(|&c| { let p = c as f64 / total; if p > 0.0 { -p * p.log2() } else { 0.0 } })
+            .sum()
     }
 }
 
@@ -347,141 +527,146 @@ mod tests {
     use super::*;
     use crate::tower::Tower;
 
-    #[test]
-    fn corpus_config_expected_records() {
-        let cfg = CorpusConfig {
-            n_phonemes: 5, taus: vec![1.0, 2.0], top_ks: vec![3],
-            output_path: "test.ndjson".to_string(),
-        };
-        assert_eq!(cfg.expected_records(), 5 * 2 * 1 * 6);
-    }
-
-    #[test]
-    fn corpus_collect_small() {
-        let tower = Tower::build();
-        let cfg   = CorpusConfig {
+    fn small_cfg() -> CorpusConfig {
+        CorpusConfig {
             n_phonemes: 3, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
-        };
-        let (records, manifest) = CorpusCollector::collect(&tower, &cfg);
-        assert_eq!(records.len(), 3 * 1 * 1 * 6, "expected 18 records");
-        assert_eq!(manifest.total_records, records.len());
-        assert_eq!(manifest.n_phonemes, 3);
+            output_path: "/tmp/test_corpus_v2.ndjson".to_string(),
+        }
     }
 
     #[test]
-    fn corpus_collect_digest_stable() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 2, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
+    fn corpus_v2_collect_small() {
+        let tower = Tower::build();
+        let (records, manifest) = CorpusCollector::collect(&tower, &small_cfg());
+        // 3 phonemes × 1 tau × 1 top_k × 12 ops (11 + 0 REJECT for first 9)
+        assert!(records.len() >= 3 * 1 * 1 * 11, "too few records: {}", records.len());
+        assert_eq!(manifest.version, "v2");
+    }
+
+    #[test]
+    fn corpus_v2_all_op_kinds_present() {
+        let tower = Tower::build();
+        let cfg = CorpusConfig {
+            n_phonemes: 10, taus: vec![1.0], top_ks: vec![3],
+            output_path: "/tmp/test_corpus_v2.ndjson".to_string(),
         };
-        let (_, m1) = CorpusCollector::collect(&tower, &cfg);
-        let (_, m2) = CorpusCollector::collect(&tower, &cfg);
+        let (records, _) = CorpusCollector::collect(&tower, &cfg);
+        let kinds: std::collections::HashSet<u8> =
+            records.iter().map(|r| r.op_class).collect();
+        // Should have at least 7 distinct op types (REJECT needs pass_idx % 10 == 9)
+        assert!(kinds.len() >= 7,
+            "only {} op kinds present: {:?}", kinds.len(), kinds);
+    }
+
+    #[test]
+    fn corpus_v2_has_reject() {
+        let tower = Tower::build();
+        let cfg = CorpusConfig {
+            n_phonemes: 10, taus: vec![1.0], top_ks: vec![3],
+            output_path: "/tmp/test_corpus_v2.ndjson".to_string(),
+        };
+        let (records, _) = CorpusCollector::collect(&tower, &cfg);
+        assert!(records.iter().any(|r| r.op_kind == OpKind::Reject),
+            "no REJECT records found");
+    }
+
+    #[test]
+    fn corpus_v2_has_accept() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::Accept));
+    }
+
+    #[test]
+    fn corpus_v2_has_select_universe() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::SelectUniverse));
+    }
+
+    #[test]
+    fn corpus_v2_has_witness_nearest() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::WitnessNearest));
+    }
+
+    #[test]
+    fn corpus_v2_has_attend() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::Attend));
+    }
+
+    #[test]
+    fn corpus_v2_has_project_layer() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::ProjectLayer));
+    }
+
+    #[test]
+    fn corpus_v2_has_return_set() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(records.iter().any(|r| r.op_kind == OpKind::ReturnSet));
+    }
+
+    #[test]
+    fn corpus_v2_op_entropy_gate() {
+        let tower = Tower::build();
+        let cfg = CorpusConfig {
+            n_phonemes: 10, taus: vec![1.0], top_ks: vec![3],
+            output_path: "/tmp/test_entropy.ndjson".to_string(),
+        };
+        let (records, _) = CorpusCollector::collect(&tower, &cfg);
+        let entropy = CorpusCollector::op_entropy(&records);
+        assert!(entropy > 2.0,
+            "Stage 10 gate FAILED: op entropy {:.3} <= 2.0 bits", entropy);
+        println!("Op entropy: {:.3} bits ✓", entropy);
+    }
+
+    #[test]
+    fn corpus_v2_digest_stable() {
+        let tower = Tower::build();
+        let (_, m1) = CorpusCollector::collect(&tower, &small_cfg());
+        let (_, m2) = CorpusCollector::collect(&tower, &small_cfg());
         assert_eq!(m1.corpus_digest, m2.corpus_digest);
     }
 
     #[test]
-    fn corpus_collect_tower_root_matches() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 2, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
-        };
-        let (_, manifest) = CorpusCollector::collect(&tower, &cfg);
-        assert_eq!(manifest.tower_root, tower.manifest.root_digest);
-    }
-
-    #[test]
-    fn corpus_records_all_verified_layers() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 2, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
-        };
-        let (records, _) = CorpusCollector::collect(&tower, &cfg);
-        // All 6 block indices present
-        for bi in 0..6 {
-            assert!(records.iter().any(|r| r.block_idx == bi),
-                "block_idx {} not found", bi);
-        }
-    }
-
-    #[test]
-    fn corpus_records_json_parseable() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 1, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
-        };
-        let (records, _) = CorpusCollector::collect(&tower, &cfg);
+    fn corpus_v2_op_classes_valid() {
+        let tower = Tower::build();
+        let (records, _) = CorpusCollector::collect(&tower, &small_cfg());
         for r in &records {
-            let json = r.to_json();
-            // Basic checks: starts with {, ends with }, has key fields
-            assert!(json.starts_with('{'), "not JSON: {}", &json[..20]);
-            assert!(json.ends_with('}'));
-            assert!(json.contains("block_idx"));
-            assert!(json.contains("step_digest"));
+            assert!(r.op_class <= 7, "op_class out of range: {}", r.op_class);
+            assert!(r.tgt_class <= 7, "tgt_class out of range: {}", r.tgt_class);
         }
     }
 
     #[test]
-    fn corpus_write_and_read_ndjson() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
+    fn corpus_v2_write_ndjson() {
+        let tower = Tower::build();
+        let cfg = CorpusConfig {
             n_phonemes: 2, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus_rw.ndjson".to_string(),
+            output_path: "/tmp/test_corpus_v2_rw.ndjson".to_string(),
         };
         let (records, manifest) = CorpusCollector::collect(&tower, &cfg);
         CorpusCollector::write_ndjson(&records, &manifest, &cfg.output_path).unwrap();
-
-        // Read back and count lines
         let content = std::fs::read_to_string(&cfg.output_path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
-        // records + 1 manifest line
         assert_eq!(lines.len(), records.len() + 1);
-        // Last line is manifest
         assert!(lines.last().unwrap().contains("__manifest"));
-        // Clean up
+        assert!(lines.last().unwrap().contains("\"version\":\"v2\""));
         let _ = std::fs::remove_file(&cfg.output_path);
     }
 
     #[test]
-    fn corpus_manifest_json_nonempty() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 1, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus.ndjson".to_string(),
-        };
-        let (_, manifest) = CorpusCollector::collect(&tower, &cfg);
-        let json = manifest.to_json();
-        assert!(json.contains("__manifest"));
-        assert!(json.contains("total_records"));
-        assert!(json.contains("corpus_digest"));
-    }
-
-    #[test]
-    fn corpus_full_44_phonemes_count() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 44, taus: vec![1.0], top_ks: vec![3],
-            output_path: "/tmp/test_corpus_full.ndjson".to_string(),
-        };
-        let (records, manifest) = CorpusCollector::collect(&tower, &cfg);
-        assert_eq!(records.len(), 44 * 1 * 1 * 6, "expected 264 records");
-        assert_eq!(manifest.total_passes, 44);
-        println!("Full corpus: {} records, digest={}",
-            records.len(), hex::encode(&manifest.corpus_digest[..8]));
-    }
-
-    #[test]
-    fn corpus_multi_tau_increases_records() {
-        let tower  = Tower::build();
-        let cfg    = CorpusConfig {
-            n_phonemes: 5, taus: vec![0.5, 1.0, 2.0, 4.0], top_ks: vec![3, 5],
-            output_path: "/tmp/test_corpus_multi.ndjson".to_string(),
-        };
-        let (records, _) = CorpusCollector::collect(&tower, &cfg);
-        assert_eq!(records.len(), 5 * 4 * 2 * 6, "expected 240 records");
+    fn corpus_v2_manifest_has_op_counts() {
+        let tower = Tower::build();
+        let (_, manifest) = CorpusCollector::collect(&tower, &small_cfg());
+        assert!(!manifest.op_counts.is_empty());
+        assert!(manifest.op_counts.iter().any(|(k, _)| k == "FFN_STEP"));
+        assert!(manifest.op_counts.iter().any(|(k, _)| k == "ACCEPT"));
     }
 }

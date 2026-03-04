@@ -1,4 +1,4 @@
-//! Generate the verified trace corpus.
+//! Generate the verified trace corpus v2 (full op vocabulary).
 //! Usage: cargo run --release --bin gen_corpus
 
 use llm_nature_semantic_transformer::tower::Tower;
@@ -9,9 +9,9 @@ fn main() {
     let tower = Tower::build();
     println!("Tower root: {}", hex::encode(&tower.manifest.root_digest[..16]));
 
-    let config = CorpusConfig::default_1k();
+    let config = CorpusConfig::v2();
     println!(
-        "Collecting corpus: {} phonemes × {} taus × {} top_ks = {} expected records",
+        "Collecting corpus v2: {} phonemes × {} taus × {} top_ks → ~{} records",
         config.n_phonemes,
         config.taus.len(),
         config.top_ks.len(),
@@ -31,4 +31,14 @@ fn main() {
 
     println!("\nWrote {}", config.output_path);
     println!("Corpus digest: {}", hex::encode(manifest.corpus_digest));
+
+    // Stage 10 gate check
+    let entropy = CorpusCollector::op_entropy(&records);
+    println!("\nStage 10 gate: op_entropy = {:.3} bits", entropy);
+    if entropy > 2.0 {
+        println!("✓ PASSED (> 2.0 bits)");
+    } else {
+        println!("✗ FAILED (<= 2.0 bits) — corpus needs more op diversity");
+        std::process::exit(1);
+    }
 }
