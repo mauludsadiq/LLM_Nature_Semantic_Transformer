@@ -441,3 +441,131 @@ mod tests {
         assert_eq!(d1, d2);
     }
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct SyllableLayer {
+    inventory: Vec<Syllable>,
+}
+
+impl SyllableLayer {
+    pub fn new() -> Self {
+        SyllableLayer { inventory: build_syllable_universe() }
+    }
+}
+
+impl Default for SyllableLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for SyllableLayer {
+    fn id(&self) -> LayerId { LayerId::Syllable }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig
+    }
+
+    fn render(&self, i: usize) -> String {
+        // syl:<onset_ids>-<nucleus_id>-<coda_ids>
+        // e.g. syl:K-AE-T uses phoneme IDs directly
+        let s = &self.inventory[i];
+        let phonemes = crate::phoneme::build_phoneme_universe();
+        let ph_sym = |id: u8| -> String {
+            phonemes.iter().find(|p| p.id == id).map(|p| p.symbol.to_string()).unwrap_or_else(|| id.to_string())
+        };
+        let onset: Vec<String> = s.onset.iter().map(|&id| ph_sym(id)).collect();
+        let coda: Vec<String>  = s.coda.iter().map(|&id| ph_sym(id)).collect();
+        format!("syl:{}-{}-{}", onset.join(""), ph_sym(s.nucleus), coda.join(""))
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        let mut leaves: Vec<[u8; 32]> = self.inventory.iter()
+            .map(|s| crate::digest::sha256_bytes(&s.canonical_bytes()))
+            .collect();
+        leaves.sort_unstable();
+        crate::digest::merkle_root(&leaves)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn syllable_layer_len() {
+        let l = SyllableLayer::new();
+        assert!(l.len() > 100_000, "expected >100k syllables, got {}", l.len());
+    }
+
+    #[test]
+    fn syllable_layer_render_nonempty() {
+        let l = SyllableLayer::new();
+        for i in 0..l.len().min(50) {
+            let r = l.render(i);
+            assert!(r.starts_with("syl:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn syllable_layer_render_has_two_dashes() {
+        let l = SyllableLayer::new();
+        for i in 0..l.len().min(50) {
+            let r = l.render(i);
+            assert_eq!(r.matches('-').count(), 2,
+                "expected 2 dashes in: {}", r);
+        }
+    }
+
+    #[test]
+    fn syllable_layer_digest_stable() {
+        let l = SyllableLayer::new();
+        for i in 0..l.len().min(20) {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn syllable_layer_nearest_self() {
+        let l = SyllableLayer::new();
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn syllable_layer_top_k() {
+        let l = SyllableLayer::new();
+        let k = l.top_k(l.sig(0), 5);
+        assert!(k.len() <= 5);
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn syllable_layer_universe_digest_stable() {
+        let l = SyllableLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn syllable_layer_witness_roundtrip() {
+        let l = SyllableLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Syllable);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+}
