@@ -193,3 +193,129 @@ mod tests {
     }
 
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct WordLayer {
+    inventory: Vec<Word>,
+}
+
+impl WordLayer {
+    pub fn new() -> Self {
+        WordLayer { inventory: build_word_universe() }
+    }
+}
+
+impl Default for WordLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for WordLayer {
+    fn id(&self) -> LayerId { LayerId::Word }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig as u16
+    }
+
+    fn render(&self, i: usize) -> String {
+        // word:<text>
+        format!("word:{}", self.inventory[i].text)
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        let mut leaves: Vec<[u8; 32]> = self.inventory.iter()
+            .map(|w| crate::digest::sha256_bytes(&w.canonical_bytes()))
+            .collect();
+        leaves.sort_unstable();
+        crate::digest::merkle_root(&leaves)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn word_layer_len() {
+        let l = WordLayer::new();
+        assert!(l.len() > 30_000, "expected >30k words, got {}", l.len());
+    }
+
+    #[test]
+    fn word_layer_render_nonempty() {
+        let l = WordLayer::new();
+        for i in 0..l.len().min(100) {
+            let r = l.render(i);
+            assert!(r.starts_with("word:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn word_layer_digest_stable() {
+        let l = WordLayer::new();
+        for i in 0..l.len().min(50) {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn word_layer_sig_matches_inventory() {
+        let l = WordLayer::new();
+        for i in 0..l.len().min(200) {
+            assert_eq!(l.sig(i), l.inventory[i].sig as u16);
+        }
+    }
+
+    #[test]
+    fn word_layer_nearest_self() {
+        let l = WordLayer::new();
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn word_layer_top_k() {
+        let l = WordLayer::new();
+        let k = l.top_k(l.sig(0), 5);
+        assert!(k.len() <= 5);
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn word_layer_universe_digest_stable() {
+        let l = WordLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn word_layer_witness_roundtrip() {
+        let l = WordLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Word);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+
+    #[test]
+    fn word_layer_contains_common_words() {
+        let l = WordLayer::new();
+        let words: Vec<String> = (0..l.len()).map(|i| l.render(i)).collect();
+        assert!(words.contains(&"word:cat".to_string()));
+        assert!(words.contains(&"word:run".to_string()));
+    }
+}
