@@ -7,6 +7,11 @@ use std::time::Instant;
 
 #[allow(unused_imports)]
 use crate::word::{build_word_universe, canonical_cmp as word_canonical_cmp, is_word_universe, sig_distance, Word};
+use crate::syllable::{build_syllable_universe, is_syllable_universe, sig_distance as syllable_sig_distance, Syllable};
+use crate::morpheme::{build_morpheme_universe, is_morpheme_universe, sig_distance as morpheme_sig_distance, Morpheme};
+use crate::phrase::{build_phrase_inventory, is_phrase_universe, sig_distance as phrase_sig_distance, Phrase};
+use crate::semantic::{build_semantic_inventory, is_semantic_universe, sig_distance as semantic_sig_distance, SemanticGraph};
+use crate::discourse::{build_discourse_inventory, is_discourse_universe, sig_distance as discourse_sig_distance, DiscourseGraph};
 use crate::boolfun::{
     build_boolfun, canonical_cmp as boolfun_canonical_cmp, is_boolfun_universe,
     parse_elem as parse_boolfun, BoolFun,
@@ -417,6 +422,31 @@ pub fn run_trace_and_write(
     let mut is_word: bool = false;
     let mut witness_word: Option<Word> = None;
     let _ = &witness_word; // read via is_word branches below
+    let mut syllable_all: Vec<Syllable> = Vec::new();
+    let mut syllable_set: Vec<Syllable> = Vec::new();
+    let mut witness_syllable: Option<Syllable> = None;
+    let _ = &witness_syllable;
+    let mut morpheme_all: Vec<Morpheme> = Vec::new();
+    let mut morpheme_set: Vec<Morpheme> = Vec::new();
+    let mut witness_morpheme: Option<Morpheme> = None;
+    let _ = &witness_morpheme;
+    let mut phrase_all: Vec<Phrase> = Vec::new();
+    let mut phrase_set: Vec<Phrase> = Vec::new();
+    let mut witness_phrase: Option<Phrase> = None;
+    let _ = &witness_phrase;
+    let mut semantic_all: Vec<SemanticGraph> = Vec::new();
+    let mut semantic_set: Vec<SemanticGraph> = Vec::new();
+    let mut witness_semantic: Option<SemanticGraph> = None;
+    let _ = &witness_semantic;
+    let mut discourse_all: Vec<DiscourseGraph> = Vec::new();
+    let mut discourse_set: Vec<DiscourseGraph> = Vec::new();
+    let mut witness_discourse: Option<DiscourseGraph> = None;
+    let _ = &witness_discourse;
+    let mut is_syllable = false;
+    let mut is_morpheme = false;
+    let mut is_phrase = false;
+    let mut is_semantic = false;
+    let mut is_discourse = false;
 
     let mut chain: [u8; 32] = sha256_bytes(b"");
 
@@ -668,6 +698,26 @@ pub fn run_trace_and_write(
                         .cloned()
                         .ok_or_else(|| anyhow!("empty word set"))?;
                     witness_word = Some(best);
+                } else if is_morpheme && metric == "HAMMING_SIG" {
+                    let t_norm = target.trim().to_ascii_lowercase();
+                    if let Some(tm) = morpheme_all.iter().find(|m| m.meaning_id.ends_with(&t_norm)).cloned() {
+                        witness_morpheme = morpheme_set.iter().min_by_key(|m| morpheme_sig_distance(m, &tm)).cloned();
+                    }
+                } else if is_phrase && metric == "HAMMING_SIG" {
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tp) = phrase_all.iter().find(|p| p.phrase_id == t_id).cloned() {
+                        witness_phrase = phrase_set.iter().min_by_key(|p| phrase_sig_distance(p, &tp)).cloned();
+                    }
+                } else if is_semantic && metric == "HAMMING_SIG" {
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tg) = semantic_all.iter().find(|g| g.graph_id == t_id).cloned() {
+                        witness_semantic = semantic_set.iter().min_by_key(|g| semantic_sig_distance(g, &tg)).cloned();
+                    }
+                } else if is_discourse && metric == "HAMMING_SIG" {
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tg) = discourse_all.iter().find(|g| g.discourse_id == t_id).cloned() {
+                        witness_discourse = discourse_set.iter().min_by_key(|g| discourse_sig_distance(g, &tg)).cloned();
+                    }
                 } else if metric == "ABS_DIFF" {
                     let t: Frac = if is_ge || target.contains(',') {
                         let parts: Vec<&str> = target
@@ -817,6 +867,14 @@ pub fn run_trace_and_write(
         witness_bf.as_ref().map(boolfun_to_string)
     } else if is_word {
         witness_word.as_ref().map(|w| w.text.clone())
+    } else if is_morpheme {
+        witness_morpheme.as_ref().map(|m| m.meaning_id.to_string())
+    } else if is_phrase {
+        witness_phrase.as_ref().map(|p| format!("phrase:{}", p.phrase_id))
+    } else if is_semantic {
+        witness_semantic.as_ref().map(|g| format!("graph:{}", g.graph_id))
+    } else if is_discourse {
+        witness_discourse.as_ref().map(|g| format!("discourse:{}", g.discourse_id))
     } else {
         witness.as_ref().map(frac_to_string)
     };
@@ -871,7 +929,7 @@ pub fn run_trace_and_write(
         "verdict": if set_nonempty { "OK" } else { "EMPTY_SET" },
         "verifier": { "valid": replay_ok },
         "chain_hash": hex32(chain),
-        "count": if is_boolfun { boolfun_set.len() } else if is_word { word_set.len() } else { state_set.len() },
+        "count": if is_boolfun { boolfun_set.len() } else if is_word { word_set.len() } else if is_syllable { syllable_set.len() } else if is_morpheme { morpheme_set.len() } else if is_phrase { phrase_set.len() } else if is_semantic { semantic_set.len() } else if is_discourse { discourse_set.len() } else { state_set.len() },
         "witness": witness_s,
         "constraint": { "mask": cst.mask, "value": cst.value },
         "return_set": { "max_items": want_max_items, "include_witness": want_include_witness },
@@ -904,13 +962,14 @@ pub fn run_trace_and_write(
 
     Ok(ExecutionResult {
         valid: verdict_ok,
-        final_count: if is_boolfun {
-            boolfun_set.len()
-        } else if is_word {
-            word_set.len()
-        } else {
-            state_set.len()
-        },
+        final_count: if is_boolfun { boolfun_set.len()
+        } else if is_word { word_set.len()
+        } else if is_syllable { syllable_set.len()
+        } else if is_morpheme { morpheme_set.len()
+        } else if is_phrase { phrase_set.len()
+        } else if is_semantic { semantic_set.len()
+        } else if is_discourse { discourse_set.len()
+        } else { state_set.len() },
         witness: witness_s,
         artifacts_path: Some(artifacts_dir),
         universe: active_universe.clone(),

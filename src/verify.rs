@@ -1,4 +1,9 @@
 use crate::word::{build_word_universe, is_word_universe, sig_distance, Word};
+use crate::syllable::{build_syllable_universe, is_syllable_universe, Syllable};
+use crate::morpheme::{build_morpheme_universe, is_morpheme_universe, Morpheme};
+use crate::phrase::{build_phrase_inventory, is_phrase_universe, Phrase};
+use crate::semantic::{build_semantic_inventory, is_semantic_universe, SemanticGraph};
+use crate::discourse::{build_discourse_inventory, is_discourse_universe, DiscourseGraph};
 use crate::boolfun::{
     build_boolfun, canonical_cmp as boolfun_canonical_cmp, is_boolfun_universe,
     parse_elem as parse_boolfun, BoolFun,
@@ -144,6 +149,21 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let mut word_set: Vec<Word> = Vec::new();
     let mut is_word: bool = false;
     let mut witness_word: Option<Word> = None;
+    let mut syllable_all: Vec<Syllable> = Vec::new();
+    let mut syllable_set: Vec<Syllable> = Vec::new();
+    let mut morpheme_all: Vec<Morpheme> = Vec::new();
+    let mut morpheme_set: Vec<Morpheme> = Vec::new();
+    let mut phrase_all: Vec<Phrase> = Vec::new();
+    let mut phrase_set: Vec<Phrase> = Vec::new();
+    let mut semantic_all: Vec<SemanticGraph> = Vec::new();
+    let mut semantic_set: Vec<SemanticGraph> = Vec::new();
+    let mut discourse_all: Vec<DiscourseGraph> = Vec::new();
+    let mut discourse_set: Vec<DiscourseGraph> = Vec::new();
+    let mut is_syllable = false;
+    let mut is_morpheme = false;
+    let mut is_phrase = false;
+    let mut is_semantic = false;
+    let mut is_discourse = false;
     let _ = &witness_word; // read via is_word branches
 
     let mut chain: [u8; 32] = sha256_bytes(b"");
@@ -208,6 +228,46 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                     witness = None;
                     witness_bf = None;
                     witness_word = None;
+                } else if is_syllable_universe(u_norm.as_str()) {
+                    is_boolfun=false; is_ge=false; is_word=false; is_syllable=true;
+                    is_morpheme=false; is_phrase=false; is_semantic=false; is_discourse=false;
+                    cst=Constraint::empty(); state_set.clear();
+                    if syllable_all.is_empty() { syllable_all=build_syllable_universe(); }
+                    syllable_set=syllable_all.clone();
+                    set_digest={let mut l:Vec<[u8;32]>=syllable_set.iter().map(|s|sha256_bytes(&s.canonical_bytes())).collect();l.sort_unstable();merkle_root(&l)};
+                    witness=None; witness_bf=None;
+                } else if is_morpheme_universe(u_norm.as_str()) {
+                    is_boolfun=false; is_ge=false; is_word=false; is_syllable=false;
+                    is_morpheme=true; is_phrase=false; is_semantic=false; is_discourse=false;
+                    cst=Constraint::empty(); state_set.clear();
+                    if morpheme_all.is_empty() { morpheme_all=build_morpheme_universe(); }
+                    morpheme_set=morpheme_all.clone();
+                    set_digest={let mut l:Vec<[u8;32]>=morpheme_set.iter().map(|m|sha256_bytes(&m.canonical_bytes())).collect();l.sort_unstable();merkle_root(&l)};
+                    witness=None; witness_bf=None;
+                } else if is_phrase_universe(u_norm.as_str()) {
+                    is_boolfun=false; is_ge=false; is_word=false; is_syllable=false;
+                    is_morpheme=false; is_phrase=true; is_semantic=false; is_discourse=false;
+                    cst=Constraint::empty(); state_set.clear();
+                    if phrase_all.is_empty() { phrase_all=build_phrase_inventory(); }
+                    phrase_set=phrase_all.clone();
+                    set_digest={let mut l:Vec<[u8;32]>=phrase_set.iter().map(|p|sha256_bytes(&p.canonical_bytes())).collect();l.sort_unstable();merkle_root(&l)};
+                    witness=None; witness_bf=None;
+                } else if is_semantic_universe(u_norm.as_str()) {
+                    is_boolfun=false; is_ge=false; is_word=false; is_syllable=false;
+                    is_morpheme=false; is_phrase=false; is_semantic=true; is_discourse=false;
+                    cst=Constraint::empty(); state_set.clear();
+                    if semantic_all.is_empty() { semantic_all=build_semantic_inventory(); }
+                    semantic_set=semantic_all.clone();
+                    set_digest={let mut l:Vec<[u8;32]>=semantic_set.iter().map(|g|sha256_bytes(&g.canonical_bytes())).collect();l.sort_unstable();merkle_root(&l)};
+                    witness=None; witness_bf=None;
+                } else if is_discourse_universe(u_norm.as_str()) {
+                    is_boolfun=false; is_ge=false; is_word=false; is_syllable=false;
+                    is_morpheme=false; is_phrase=false; is_semantic=false; is_discourse=true;
+                    cst=Constraint::empty(); state_set.clear();
+                    if discourse_all.is_empty() { discourse_all=build_discourse_inventory(); }
+                    discourse_set=discourse_all.clone();
+                    set_digest={let mut l:Vec<[u8;32]>=discourse_set.iter().map(|g|sha256_bytes(&g.canonical_bytes())).collect();l.sort_unstable();merkle_root(&l)};
+                    witness=None; witness_bf=None;
                 } else {
                     return Ok(false);
                 }
