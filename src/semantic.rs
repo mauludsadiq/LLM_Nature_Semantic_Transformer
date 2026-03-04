@@ -606,3 +606,150 @@ impl SemanticGraph {
     #[cfg(test)]
     fn sig16_for_test(&self) -> u16 { sig16(self) }
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct SemanticLayer {
+    inventory: Vec<SemanticGraph>,
+}
+
+impl SemanticLayer {
+    pub fn new() -> Self {
+        let mut inv = build_semantic_inventory();
+        for g in inv.iter_mut() {
+            g.sig = sig16(g);
+        }
+        SemanticLayer { inventory: inv }
+    }
+}
+
+impl Default for SemanticLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for SemanticLayer {
+    fn id(&self) -> LayerId { LayerId::Semantic }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig
+    }
+
+    fn render(&self, i: usize) -> String {
+        let g = &self.inventory[i];
+        // sem:<graph_id>:<event_label>(<role>:<entity_label>,...)[,<tense>][,neg]
+        let event = g.nodes.iter().find(|n| n.node_type == NodeType::Event);
+        let event_label = event.map(|n| n.label.as_str()).unwrap_or("?");
+        let event_id = event.map(|n| n.id).unwrap_or(0);
+
+        let mut roles: Vec<String> = g.edges.iter()
+            .filter(|e| e.source == event_id)
+            .map(|e| {
+                let tgt = g.nodes.iter().find(|n| n.id == e.target);
+                let tgt_label = tgt.map(|n| n.label.as_str()).unwrap_or("?");
+                format!("{}:{}", e.relation.as_str(), tgt_label)
+            })
+            .collect();
+        roles.sort();
+
+        let tense = match g.tense {
+            Tense::Past    => ",past",
+            Tense::Present => ",present",
+            Tense::Future  => ",future",
+            Tense::None    => "",
+        };
+        let polarity = match g.polarity {
+            Polarity::Negative => ",neg",
+            Polarity::Positive => "",
+        };
+
+        format!("sem:{}:{}({}){}{}", g.graph_id, event_label, roles.join(","), tense, polarity)
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        semantic_universe_digest(&self.inventory)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn semantic_layer_len() {
+        let l = SemanticLayer::new();
+        assert_eq!(l.len(), 6);
+    }
+
+    #[test]
+    fn semantic_layer_render_nonempty() {
+        let l = SemanticLayer::new();
+        for i in 0..l.len() {
+            let r = l.render(i);
+            assert!(r.starts_with("sem:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn semantic_layer_digest_stable() {
+        let l = SemanticLayer::new();
+        for i in 0..l.len() {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn semantic_layer_sig_matches_sig16() {
+        let l = SemanticLayer::new();
+        let inv = build_semantic_inventory();
+        for (i, g) in inv.iter().enumerate() {
+            assert_eq!(l.sig(i), sig16(g));
+        }
+    }
+
+    #[test]
+    fn semantic_layer_nearest_self() {
+        let l = SemanticLayer::new();
+        // nearest to sig of element 0 must be element 0 itself (distance 0)
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn semantic_layer_top_k() {
+        let l = SemanticLayer::new();
+        let k = l.top_k(l.sig(0), 3);
+        assert!(k.len() <= 3);
+        // first result must be at least as close as second
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn semantic_layer_universe_digest_stable() {
+        let l = SemanticLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn semantic_layer_witness_roundtrip() {
+        let l = SemanticLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Semantic);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+}
