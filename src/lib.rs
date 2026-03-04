@@ -18,3 +18,4 @@ pub mod sig_index;
 pub mod edges;
 pub mod attention;
 pub mod feedforward;
+pub mod transformer;
