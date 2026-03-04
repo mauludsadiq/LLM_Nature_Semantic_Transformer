@@ -140,6 +140,14 @@ pub fn parse_elem(s: &str) -> Option<BoolFun> {
         });
     }
 
+    if let Some(ds) = t.strip_prefix("u64:").or_else(|| t.strip_prefix("u8:")) {
+        let bits: u64 = ds.trim().parse::<u64>().ok()?;
+        if bits > 0x7f {
+            return None;
+        }
+        return Some(BoolFun { n: 7, bits: bits & 0x7f });
+    }
+
     if let Some(b0) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
         let b = b0.trim();
         if b.is_empty() {
