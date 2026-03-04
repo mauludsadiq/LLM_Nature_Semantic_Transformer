@@ -12,3 +12,4 @@ pub mod syllable;
 pub mod morpheme;
 pub mod phrase;
 pub mod semantic;
+pub mod discourse;
