@@ -254,7 +254,7 @@ fn main() -> Result<()> {
                         if *include_witness { 1 } else { 0 }
                     ));
                 }
-                _ => {}
+                _ => unreachable!("unhandled Op variant in NL compiler path")
             }
         }
 

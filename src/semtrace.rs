@@ -103,7 +103,7 @@ pub fn bit_legend_geom() -> [&'static str; 7] {
 pub fn sig7(f: &Frac) -> u8 {
     let mut bits: u8 = 0;
     let positive = f.num > 0;
-    let integer = true; // QE universe: all elems are rationals with integer num/den.
+    let integer = f.den == 1; // true iff the fraction is a whole number
     let den_le_6 = f.den <= 6;
     let num_even = f.num % 2 == 0;
     let den_mod3 = f.den % 3 == 0;
