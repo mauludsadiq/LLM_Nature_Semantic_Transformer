@@ -7,3 +7,4 @@ pub mod qe;
 pub mod semtrace;
 pub mod verify;
 pub mod word;
+pub mod phoneme;
