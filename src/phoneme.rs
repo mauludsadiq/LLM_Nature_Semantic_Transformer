@@ -344,3 +344,126 @@ mod tests {
         assert_eq!(sig_distance(p, b), 1, "P/B differ only in voicing");
     }
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct PhonemeLayer {
+    inventory: Vec<Phoneme>,
+}
+
+impl PhonemeLayer {
+    pub fn new() -> Self {
+        PhonemeLayer { inventory: build_phoneme_universe() }
+    }
+}
+
+impl Default for PhonemeLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for PhonemeLayer {
+    fn id(&self) -> LayerId { LayerId::Phoneme }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig
+    }
+
+    fn render(&self, i: usize) -> String {
+        // ph:<symbol>
+        // e.g. ph:AE  ph:K  ph:IY
+        format!("ph:{}", self.inventory[i].symbol)
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        phoneme_universe_digest(&self.inventory)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn phoneme_layer_len() {
+        let l = PhonemeLayer::new();
+        assert_eq!(l.len(), 44);
+    }
+
+    #[test]
+    fn phoneme_layer_render_nonempty() {
+        let l = PhonemeLayer::new();
+        for i in 0..l.len() {
+            let r = l.render(i);
+            assert!(r.starts_with("ph:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn phoneme_layer_digest_stable() {
+        let l = PhonemeLayer::new();
+        for i in 0..l.len() {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn phoneme_layer_sig_matches_inventory() {
+        let l = PhonemeLayer::new();
+        for i in 0..l.len() {
+            assert_eq!(l.sig(i), l.inventory[i].sig);
+        }
+    }
+
+    #[test]
+    fn phoneme_layer_nearest_self() {
+        let l = PhonemeLayer::new();
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn phoneme_layer_top_k() {
+        let l = PhonemeLayer::new();
+        let k = l.top_k(l.sig(0), 5);
+        assert!(k.len() <= 5);
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn phoneme_layer_universe_digest_stable() {
+        let l = PhonemeLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn phoneme_layer_witness_roundtrip() {
+        let l = PhonemeLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Phoneme);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+
+    #[test]
+    fn phoneme_layer_renders_known_symbols() {
+        let l = PhonemeLayer::new();
+        let rendered: Vec<String> = (0..l.len()).map(|i| l.render(i)).collect();
+        assert!(rendered.contains(&"ph:AE".to_string()));
+        assert!(rendered.contains(&"ph:K".to_string()));
+    }
+}
