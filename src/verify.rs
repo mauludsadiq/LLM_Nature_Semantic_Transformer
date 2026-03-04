@@ -437,6 +437,30 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                         .cloned()
                         .ok_or_else(|| anyhow!("empty word set"))?;
                     witness_word = Some(best);
+                } else if is_morpheme && metric == "HAMMING_SIG" {
+                    use crate::morpheme::sig_distance as morpheme_sig_distance;
+                    let t_norm = target.trim().to_ascii_lowercase();
+                    if let Some(tm) = morpheme_all.iter().find(|m| m.meaning_id.ends_with(&t_norm)).cloned() {
+                        let _ = morpheme_set.iter().min_by_key(|m| morpheme_sig_distance(m, &tm));
+                    }
+                } else if is_phrase && metric == "HAMMING_SIG" {
+                    use crate::phrase::sig_distance as phrase_sig_distance;
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tp) = phrase_all.iter().find(|p| p.phrase_id == t_id).cloned() {
+                        let _ = phrase_set.iter().min_by_key(|p| phrase_sig_distance(p, &tp));
+                    }
+                } else if is_semantic && metric == "HAMMING_SIG" {
+                    use crate::semantic::sig_distance as semantic_sig_distance;
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tg) = semantic_all.iter().find(|g| g.graph_id == t_id).cloned() {
+                        let _ = semantic_set.iter().min_by_key(|g| semantic_sig_distance(g, &tg));
+                    }
+                } else if is_discourse && metric == "HAMMING_SIG" {
+                    use crate::discourse::sig_distance as discourse_sig_distance;
+                    let t_id: u32 = target.trim().parse().unwrap_or(1);
+                    if let Some(tg) = discourse_all.iter().find(|g| g.discourse_id == t_id).cloned() {
+                        let _ = discourse_set.iter().min_by_key(|g| discourse_sig_distance(g, &tg));
+                    }
                 } else if metric != "ABS_DIFF" {
                     return Ok(false);
                 } else {
