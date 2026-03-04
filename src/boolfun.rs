@@ -4,7 +4,8 @@ use std::cmp::Ordering;
 pub fn is_boolfun_universe(u_norm: &str) -> bool {
     matches!(u_norm,
         "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
-        "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"
+        "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"|
+        "BOOLFUN7"|"BOOLFUN_7"|"BOOLFUN<N=7>"|"BOOLFUNSIG7"|"BOOLFUNSIG_7"
     )
 }
 
@@ -17,11 +18,15 @@ pub struct BoolFun {
 impl BoolFun {
     /// Number of rows in truth table = 2^n.
     pub fn rows(&self) -> u32 {
+        // Special universe: n=7 represents a 7-bit signature element (128 elems), not a 2^n truth-table.
+        if self.n == 7 { return 7; }
         1u32 << (self.n as u32)
     }
 
     /// Mask of valid output bits (low 2^n bits).
     pub fn mask(&self) -> u64 {
+        // n=7 signature universe: only low 7 bits are meaningful.
+        if self.n == 7 { return 0x7f; }
         let r = self.rows();
         if r == 64 { u64::MAX } else { (1u64 << r) - 1 }
     }
@@ -61,17 +66,27 @@ pub fn canonical_cmp(a: &BoolFun, b: &BoolFun) -> Ordering {
 /// - For smaller n: generate full space 0..2^(2^n)-1.
 /// Note: capped at n<=6 (64 rows) to keep bits in u64.
 pub fn build_boolfun(n: u8) -> Vec<BoolFun> {
-    let rows = 1u32 << (n as u32);
-    assert!(rows <= 64, "BoolFun n too large for u64 packing");
-    let total: u64 = if rows == 64 { u64::MAX } else { 1u64 << rows };
+        // Special universe: n=7 is a 7-bit signature space (0..127), not the full 2^(2^n) truth-table space.
+        if n == 7 {
+            let mut v: Vec<BoolFun> = Vec::with_capacity(128);
+            for bits in 0u64..128u64 {
+                v.push(BoolFun { n, bits });
+            }
+            v.sort_by(canonical_cmp);
+            return v;
+        }
 
-    let mut v: Vec<BoolFun> = Vec::with_capacity(total as usize);
-    for bits in 0..total {
-        v.push(BoolFun { n, bits });
+        let rows = 1u32 << (n as u32);
+        assert!(rows <= 64, "BoolFun n too large for u64 packing");
+        let total: u64 = if rows == 64 { u64::MAX } else { 1u64 << rows };
+
+        let mut v: Vec<BoolFun> = Vec::with_capacity(total as usize);
+        for bits in 0..total {
+            v.push(BoolFun { n, bits });
+        }
+        v.sort_by(canonical_cmp);
+        v
     }
-    v.sort_by(canonical_cmp);
-    v
-}
 
 /// Parse element encodings:
 /// - "0xBEEF" (hex, implies n=4)
@@ -98,12 +113,17 @@ pub fn parse_elem(s: &str) -> Option<BoolFun> {
           let b = b0.trim();
           if b.is_empty() { return None; }
           if !b.chars().all(|c| c == '0' || c == '1') { return None; }
-          // Interpret 0b... as a packed u16 truth table (n=4), MSB..LSB
+          // 0b... parsing:
+          // - if <=7 bits: signature element (n=7, bits in 0..127)
+          // - else (<=16 bits): packed u16 truth-table (n=4), MSB..LSB
           if b.len() > 16 { return None; }
           let mut bits: u64 = 0;
           for ch in b.chars() {
               bits <<= 1;
               if ch == '1' { bits |= 1; }
+          }
+          if b.len() <= 7 {
+              return Some(BoolFun { n: 7, bits: bits & 0x7f });
           }
           return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
       }
@@ -160,4 +180,13 @@ mod tests {
         assert_eq!(f.bits, 1);
         assert_eq!(f.weight(), 1);
     }
+
+    #[test]
+    fn parse_0b_signature_n7() {
+        let f = parse_elem("0b1010101").unwrap();
+        assert_eq!(f.n, 7);
+        assert_eq!(f.bits, 0b1010101);
+        assert_eq!(f.mask(), 0x7f);
+    }
+
 }

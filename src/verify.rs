@@ -275,11 +275,20 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                   let elem = rec.args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
                   let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
                   let sig: u64 = (crate::semtrace::sig7(&f) as u64) & 0x7f;
-is_boolfun = true; is_ge = false; cst = Constraint::empty(); state_set.clear(); witness = None;
-                  boolfun_n = 4; boolfun_all = build_boolfun(4); boolfun_set = boolfun_all.clone();
+
+                  // QE -> 7-bit signature -> BOOLFUN signature universe (n=7, bits in 0..127)
+                  is_boolfun = true;
+                  is_ge = false;
+                  cst = Constraint::empty();
+                  state_set.clear();
+                  witness = None;
+
+                  boolfun_n = 7;
+                  boolfun_all = build_boolfun(7);
+                  boolfun_set = boolfun_all.clone();
                   boolfun_set.sort_by(boolfun_canonical_cmp);
                   set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                  witness_bf = Some(BoolFun { n: 4, bits: (sig & 0x7f) });
+                  witness_bf = Some(BoolFun { n: 7, bits: sig });
               }
               "JOIN_NEAREST" => {
                   let metric = rec.args.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
