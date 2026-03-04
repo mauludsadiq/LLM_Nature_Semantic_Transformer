@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let qfirst = qtrim.split_whitespace().next().unwrap_or("");
     let _is_explicit_ops = !is_json && matches!(
         qfirst,
-        "LOAD" | "MASK_BIT" | "SELECT_UNIVERSE" | "FILTER_WEIGHT" | "TOPK" | "WITNESS_NEAREST" | "RETURN_SET" | "JOIN_NEAREST"
+        "LOAD" | "MASK_BIT" | "SELECT_UNIVERSE" | "FILTER_WEIGHT" | "TOPK" | "WITNESS_NEAREST" | "RETURN_SET" | "JOIN_NEAREST" | "PROJECT_SIGNATURE"
     );
 
     fn split_explicit_ops(script: &str) -> Vec<String> {
@@ -41,8 +41,9 @@ fn main() -> Result<()> {
             "FILTER_WEIGHT",
             "TOPK",
             "WITNESS_NEAREST",
-            "RETURN_SET",
-            "JOIN_NEAREST",
+              "RETURN_SET",
+              "JOIN_NEAREST",
+              "PROJECT_SIGNATURE",
         ];
         let mut out: Vec<String> = Vec::new();
         let mut cur: Vec<String> = Vec::new();
@@ -103,12 +104,17 @@ fn main() -> Result<()> {
                           out.push(format!("MASK_BIT bit={} val={}", i, b));
                       }
                       "WITNESS_NEAREST" => {
-                          let target = opv.get("target_elem").and_then(|v| v.as_str())
-                              .or_else(|| opv.get("target").and_then(|v| v.as_str()))
-                              .ok_or_else(|| anyhow!("WITNESS_NEAREST missing target"))?;
-                          let metric = opv.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
-                          out.push(format!("WITNESS_NEAREST target_elem={} metric={}", target, metric));
-                      }
+                            let target = opv.get("target_elem").and_then(|v| v.as_str())
+                                .or_else(|| opv.get("target").and_then(|v| v.as_str()))
+                                .ok_or_else(|| anyhow!("WITNESS_NEAREST missing target_elem"))?;
+                            let metric = opv.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
+                            out.push(format!("WITNESS_NEAREST target_elem={} metric={}", target, metric));
+                        }
+                        "PROJECT_SIGNATURE" => {
+                            let elem = opv.get("elem").and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow!("PROJECT_SIGNATURE missing elem"))?;
+                            out.push(format!("PROJECT_SIGNATURE elem={}", elem));
+                        }
                         "JOIN_NEAREST" => {
                             let lu = opv.get("left_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe"))?;
                             let ru = opv.get("right_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe"))?;
@@ -184,25 +190,29 @@ fn main() -> Result<()> {
     
     // Run the trace through the verifier
     let result = exec::run_trace_and_write(&trace_ops, trace_path.as_deref(), cli.verbose)?;
-    // Extract reference (prefer LOAD; else WITNESS_NEAREST target_elem=; else JOIN_NEAREST left_elem=)
-      fn extract_kv(op: &str, key: &str) -> Option<String> {
-          for tok in op.split_whitespace() {
-              if let Some(rest) = tok.strip_prefix(&(key.to_string() + "=")) {
-                  return Some(rest.to_string());
-              }
-          }
-          None
-      }
+    // Extract reference (prefer LOAD; else PROJECT_SIGNATURE elem=; else WITNESS_NEAREST target_elem=; else JOIN_NEAREST left_elem=)
+        fn extract_kv(op: &str, key: &str) -> Option<String> {
+            for tok in op.split_whitespace() {
+                if let Some(rest) = tok.strip_prefix(&(key.to_string() + "=")) {
+                    return Some(rest.to_string());
+                }
+            }
+            None
+        }
 
-      let reference = if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
-          start_op.split_whitespace().nth(1).unwrap_or("13/37").to_string()
-      } else if let Some(wop) = trace_ops.iter().find(|op| op.starts_with("WITNESS_NEAREST")) {
-          extract_kv(wop, "target_elem").unwrap_or_else(|| "13/37".to_string())
-      } else if let Some(jop) = trace_ops.iter().find(|op| op.starts_with("JOIN_NEAREST")) {
-          extract_kv(jop, "left_elem").unwrap_or_else(|| "13/37".to_string())
-      } else {
-          "13/37".to_string()
-      };
+        let reference = if let Some(start_op) = trace_ops.iter().find(|op| op.starts_with("LOAD ")) {
+            start_op.split_whitespace().nth(1).unwrap_or("13/37").to_string()
+        } else if let Some(pop) = trace_ops.iter().find(|op| op.starts_with("PROJECT_SIGNATURE")) {
+            extract_kv(pop, "elem").unwrap_or_else(|| "13/37".to_string())
+        } else if let Some(wop) = trace_ops.iter().find(|op| op.starts_with("WITNESS_NEAREST")) {
+            extract_kv(wop, "target_elem").unwrap_or_else(|| "13/37".to_string())
+        } else if let Some(jop) = trace_ops.iter().find(|op| op.starts_with("JOIN_NEAREST")) {
+            extract_kv(jop, "left_elem").unwrap_or_else(|| "13/37".to_string())
+        } else {
+            "13/37".to_string()
+        };
+
+
 
       // Parse reference as f64 (only if it is actually a fraction)
       let (ref_value, reference_is_frac) = if reference.contains("/") {

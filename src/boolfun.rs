@@ -94,7 +94,20 @@ pub fn parse_elem(s: &str) -> Option<BoolFun> {
         return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
     }
 
-    if let Some(bs) = t.strip_prefix("bin:") {
+    if let Some(b0) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+          let b = b0.trim();
+          if b.is_empty() { return None; }
+          if !b.chars().all(|c| c == '0' || c == '1') { return None; }
+          // Interpret 0b... as a packed u16 truth table (n=4), MSB..LSB
+          if b.len() > 16 { return None; }
+          let mut bits: u64 = 0;
+          for ch in b.chars() {
+              bits <<= 1;
+              if ch == '1' { bits |= 1; }
+          }
+          return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
+      }
+      if let Some(bs) = t.strip_prefix("bin:") {
         let b = bs.trim();
         if b.is_empty() { return None; }
         if !b.chars().all(|c| c == '0' || c == '1') { return None; }

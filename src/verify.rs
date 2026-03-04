@@ -184,19 +184,29 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 witness_bf = None;
             }
             "TOPK" => {
-                if !is_boolfun { return Ok(false); }
-                let target_s = rec.args.get("target_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
-                let k = rec.args.get("k").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as usize;
-                let target = parse_boolfun(target_s).ok_or_else(|| anyhow!("bad target"))?;
-                if target.n != boolfun_n { return Ok(false); }
+                  if !is_boolfun { return Ok(false); }
+                  let target_s = rec.args.get("target_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let k = rec.args.get("k").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args"))? as usize;
+                  let target = parse_boolfun(target_s).ok_or_else(|| anyhow!("bad target"))?;
 
-                let mut scored: Vec<(u32, BoolFun)> = boolfun_set.iter().copied().map(|f| (f.hamming(&target), f)).collect();
-                scored.sort_by(|(da, fa), (db, fb)| da.cmp(db).then_with(|| boolfun_canonical_cmp(fa, fb)));
-                let take = k.min(scored.len());
-                let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
-                witness_bf = top.get(0).copied();
-                // digest/count unchanged
-            }
+                  if boolfun_n == 0 {
+                      boolfun_n = target.n;
+                      boolfun_all = build_boolfun(boolfun_n);
+                      boolfun_set = boolfun_all.clone();
+                      boolfun_set.sort_by(boolfun_canonical_cmp);
+                      set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                  }
+                  if target.n != boolfun_n { return Ok(false); }
+
+                  let mut scored: Vec<(u32, BoolFun)> = boolfun_set.iter().copied().map(|f| (f.hamming(&target), f)).collect();
+                  scored.sort_by(|(da, fa), (db, fb)| da.cmp(db).then_with(|| boolfun_canonical_cmp(fa, fb)));
+                  let take = k.min(scored.len());
+                  let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
+                  boolfun_set = top;
+                  boolfun_set.sort_by(boolfun_canonical_cmp);
+                  set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                  witness_bf = boolfun_set.get(0).copied();
+              }
 
             "START_ELEM" => {
                 let elem = rec.args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
@@ -261,33 +271,55 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty"))?;
                 witness = Some(w);
             }
+              "PROJECT_SIGNATURE" => {
+                  let elem = rec.args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
+                  let sig: u64 = (crate::semtrace::sig7(&f) as u64) & 0x7f;
+is_boolfun = true; is_ge = false; cst = Constraint::empty(); state_set.clear(); witness = None;
+                  boolfun_n = 4; boolfun_all = build_boolfun(4); boolfun_set = boolfun_all.clone();
+                  boolfun_set.sort_by(boolfun_canonical_cmp);
+                  set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                  witness_bf = Some(BoolFun { n: 4, bits: (sig & 0x7f) });
+              }
               "JOIN_NEAREST" => {
                   let metric = rec.args.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
                   if metric != "ABS_DIFF" && metric != "HAMMING" {
                       return Err(anyhow!("unsupported join metric: {}", metric));
                   }
 
-                  // If caller starts with JOIN_NEAREST (no prior SELECT_UNIVERSE/LOAD), treat it as an implied QE seed.
-                  let left_universe = rec.args.get("left_universe").and_then(|v| v.as_str()).unwrap_or("");
-                  if !is_boolfun && state_set.is_empty() && left_universe.eq_ignore_ascii_case("QE") {
-                      is_boolfun = false;
-                      is_ge = false;
-                      cst = Constraint::empty();
-                      witness_bf = None;
-                      state_set = qe.clone();
-                      set_digest = canonical_set_digest(&state_set);
-                  }
+                  let lu = rec.args.get("left_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let ru = rec.args.get("right_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let le = rec.args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
+                  let re = rec.args.get("right_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
 
-                  let left = rec.args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args"))?;
-                  if is_boolfun {
-                      let bf = parse_boolfun(left).ok_or_else(|| anyhow!("bad left_elem"))?;
-                      if bf.n != boolfun_n { return Ok(false); }
+                  let lu_norm = lu.to_ascii_uppercase();
+                  let ru_norm = ru.to_ascii_uppercase();
+
+                  if lu_norm == "QE" && is_boolfun_universe(ru_norm.as_str()) {
+                      if state_set.is_empty() {
+                          is_boolfun = false;
+                          is_ge = false;
+                          cst = Constraint::empty();
+                          witness_bf = None;
+                          witness = None;
+                          state_set = qe.clone();
+                          set_digest = canonical_set_digest(&state_set);
+                      }
+
+                      let bf = parse_boolfun(re).ok_or_else(|| anyhow!("bad right_elem"))?;
                       witness_bf = Some(bf);
+                      cst.mask = 0x7f;
+                      cst.value = (bf.bits as u8) & 0x7f;
+
+                      state_set = filter_qe(&qe, cst);
+                      set_digest = canonical_set_digest(&state_set);
+
+                      let t = parse_frac(le).ok_or_else(|| anyhow!("bad left_elem"))?;
+                      let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
+                      witness = Some(w);
                   } else {
-                      let f = parse_frac(left).ok_or_else(|| anyhow!("bad left_elem"))?;
-                      witness = Some(f);
+                      return Err(anyhow!("JOIN_NEAREST unsupported join: left_universe={} right_universe={}", lu, ru));
                   }
-                  // v1: minimal activation (single-side projection: left_elem -> witness)
               }
               "RETURN_SET" => {
                 // no-op for state
