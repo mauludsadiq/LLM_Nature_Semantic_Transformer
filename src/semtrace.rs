@@ -185,3 +185,53 @@ impl Constraint {
         (sig & self.mask) == (self.value & self.mask)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::qe::Frac;
+
+    #[test]
+    fn sig7_integer_fraction() {
+        // Frac { num: 3, den: 1 } is a positive integer
+        let f = Frac { num: 3, den: 1 };
+        let s = sig7(&f);
+        // bit 0: positive (3 > 0) = 1
+        assert_eq!((s >> 0) & 1, 1, "positive");
+        // bit 1: rat_int (den == 1) = 1
+        assert_eq!((s >> 1) & 1, 1, "rat_int");
+        // bit 2: den<=6 (1 <= 6) = 1
+        assert_eq!((s >> 2) & 1, 1, "den<=6");
+        // bit 3: num_even (3 % 2 == 0) = 0
+        assert_eq!((s >> 3) & 1, 0, "num_even");
+        // bit 4: den_mod3 (1 % 3 == 0) = 0
+        assert_eq!((s >> 4) & 1, 0, "den_mod3");
+        // bit 5: proper (3.abs() < 1) = 0
+        assert_eq!((s >> 5) & 1, 0, "proper");
+        // bit 6: num_abs<=5 (3 <= 5) = 1
+        assert_eq!((s >> 6) & 1, 1, "num_abs<=5");
+        // stable literal: 0b1000111 = 71
+        assert_eq!(s, 0b1000111, "stable signature for Frac {{ num:3, den:1 }}");
+    }
+
+    #[test]
+    fn sig7_negative_integer() {
+        let f = Frac { num: -2, den: 1 };
+        let s = sig7(&f);
+        // bit 0: positive (-2 > 0) = 0
+        assert_eq!((s >> 0) & 1, 0, "positive");
+        // bit 1: rat_int (den == 1) = 1
+        assert_eq!((s >> 1) & 1, 1, "rat_int");
+        // bit 2: den<=6 = 1
+        assert_eq!((s >> 2) & 1, 1, "den<=6");
+        // bit 3: num_even (-2 % 2 == 0) = 1
+        assert_eq!((s >> 3) & 1, 1, "num_even");
+        // bit 4: den_mod3 (1 % 3 == 0) = 0
+        assert_eq!((s >> 4) & 1, 0, "den_mod3");
+        // bit 5: proper (2 < 1) = 0
+        assert_eq!((s >> 5) & 1, 0, "proper");
+        // bit 6: num_abs<=5 (2 <= 5) = 1
+        assert_eq!((s >> 6) & 1, 1, "num_abs<=5");
+        assert_eq!(s, 0b1001110, "stable signature for Frac {{ num:-2, den:1 }}");
+    }
+}

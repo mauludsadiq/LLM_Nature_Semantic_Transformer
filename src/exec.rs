@@ -894,3 +894,38 @@ pub fn write_trace_to_file(ops: &[String], query: &str) -> Result<PathBuf> {
 
     Ok(trace_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_signature_roundtrip() {
+        let ops = vec![
+            "PROJECT_SIGNATURE elem=7/200".to_string(),
+            "RETURN_SET max_items=8 include_witness=1".to_string(),
+        ];
+        let result = run_trace_and_write(&ops, None, false).unwrap();
+        // Must be valid (exec and verify agree)
+        assert!(result.valid, "verifier must agree with executor");
+        // Universe defaults to QE (no SELECT_UNIVERSE op)
+        assert_eq!(result.universe, "QE");
+        // sig7(7/200): positive=1, rat_int=0, den<=6=0, num_even=0, den_mod3=0, proper=1, num_abs<=5=0
+        // = 0b0100001 = 33
+        assert_eq!(result.witness.as_deref(), Some("u64:33"),
+            "sig7(7/200) should be 33");
+    }
+
+    #[test]
+    fn project_signature_integer_elem() {
+        let ops = vec![
+            "PROJECT_SIGNATURE elem=3/1".to_string(),
+            "RETURN_SET max_items=4 include_witness=1".to_string(),
+        ];
+        let result = run_trace_and_write(&ops, None, false).unwrap();
+        assert!(result.valid);
+        // sig7(3/1) = 0b1000111 = 71 (from semtrace tests)
+        assert_eq!(result.witness.as_deref(), Some("u64:71"),
+            "sig7(3/1) should be 71");
+    }
+}

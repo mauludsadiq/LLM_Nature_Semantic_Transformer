@@ -253,4 +253,22 @@ mod tests {
         assert_eq!(f.bits, 0b1010101);
         assert_eq!(f.mask(), 0x7f);
     }
+    #[test]
+    fn parse_u64_prefix() {
+        // u64: is a 7-bit QE signature format (n=7, bits 0..=127)
+        let f = parse_elem("u64:35").unwrap();
+        assert_eq!(f.bits, 35);
+        assert_eq!(f.n, 7);
+        // u64:0 edge case
+        let z = parse_elem("u64:0").unwrap();
+        assert_eq!(z.bits, 0);
+        assert_eq!(z.n, 7);
+        // u64:127 is max valid value
+        let max = parse_elem("u64:127").unwrap();
+        assert_eq!(max.bits, 127);
+        assert_eq!(max.n, 7);
+        // u64:128 exceeds 7 bits, rejected
+        assert!(parse_elem("u64:128").is_none());
+    }
+
 }
