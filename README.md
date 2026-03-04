@@ -22,6 +22,25 @@ A trace is accepted only when `Executor` and `Verifier` agree on every step dige
 
 -----
 
+## 9-Stage Scaling Architecture
+
+The system was built in 9 stages, each adding a certified component:
+
+| Stage | Module            | What it provides                                         |
+|-------|-------------------|----------------------------------------------------------|
+| 0     | `layer.rs`        | Unified `Layer` trait over all 7 universes               |
+| 1     | `sig_index.rs`    | Certified inverted index; O(sigs) WITNESS_NEAREST        |
+| 2     | all layer modules | Canonical `render()` on all 7 layers                     |
+| 3     | `edges.rs`        | 6 certified cross-layer projection edges                 |
+| 4     | `attention.rs`    | CertifiedAttention: softmax over Hamming distances       |
+| 5     | `feedforward.rs`  | TowerFFN: feed-forward as certified graph traversal      |
+| 6     | `layer.rs`        | TowerPosition: structural positional encoding            |
+| 7     | `transformer.rs`  | TowerTransformer: block assembly, chained digest pass    |
+| 8     | `proposer.rs`     | Probabilistic proposer with binary verifier reward       |
+| 9     | `tower.rs`        | Unified content-addressed artifact with `root_digest`    |
+
+-----
+
 ## The Tower: 7 Certified Linguistic Universes
 
 Language is modelled as a tower of finite, typed, digest-locked universes. Each layer depends on the one below it. Every element in every layer has a canonical byte encoding, a 16-bit structural signature, and a SHA-256 digest. The universe digest is a Merkle root over all element digests, bound to the layer’s validation rules.
@@ -35,7 +54,7 @@ Layer 5  PHRASE      5 certified parse trees  16-bit sig
            ↑ depends on
 Layer 4  WORD        34,487 words             8-bit sig   (CMU + WordNet)
            ↑ depends on
-Layer 3  MORPHEME    15 morphemes            16-bit sig
+Layer 3  MORPHEME    16 morphemes            16-bit sig
            ↑ depends on
 Layer 2  SYLLABLE    ~423,000 syllables      16-bit sig
            ↑ depends on
@@ -52,7 +71,7 @@ Layer 1  PHONEME     44 phonemes             12-bit sig
 
 ### Layer 3 — MORPHEME
 
-15 certified morphemes covering the core English morphological inventory:
+16 certified morphemes covering the core English morphological inventory:
 
 - Free morphemes: `CAT`, `DOG`, `RUN`, `WALK`, `HAPPY`, `UN-`
 - Bound morphemes with allomorphy:
@@ -171,18 +190,26 @@ cargo test
 
 ## Test suite
 
-89 tests across all 7 layers and the executor/verifier pipeline.
+266 tests across all 7 layers and the executor/verifier pipeline.
 
-|Module     |Tests|Coverage                                                |
-|-----------|-----|--------------------------------------------------------|
-|`phoneme`  |✓    |inventory, signatures, digests                          |
-|`syllable` |✓    |phonotactics, validator, signatures                     |
-|`morpheme` |✓    |allomorphy, meaning_id identity, signatures             |
-|`word`     |✓    |CMU+WordNet inventory, nearest-word                     |
-|`phrase`   |✓    |grammar validator, parse trees, signatures              |
-|`semantic` |✓    |graph validation, paraphrase invariance, signatures     |
-|`discourse`|✓    |temporal acyclicity, coreference, typed unknown         |
-|`exec`     |✓    |PROJECT_SIGNATURE roundtrip, WORD nearest, new universes|
+|Module        |Tests|Coverage                                                      |
+|--------------|-----|--------------------------------------------------------------|
+|`phoneme`     |✓    |inventory, signatures, digests, Layer trait                   |
+|`syllable`    |✓    |phonotactics, validator, signatures, Layer trait              |
+|`morpheme`    |✓    |allomorphy, meaning_id identity, signatures, Layer trait      |
+|`word`        |✓    |CMU+WordNet inventory, nearest-word, Layer trait              |
+|`phrase`      |✓    |grammar validator, parse trees, signatures, Layer trait       |
+|`semantic`    |✓    |graph validation, paraphrase invariance, signatures, Layer trait|
+|`discourse`   |✓    |temporal acyclicity, coreference, typed unknown, Layer trait  |
+|`layer`       |✓    |LayerId, TowerPosition, LayerWitness, TowerContext            |
+|`sig_index`   |✓    |certified inverted index, posting digests, tamper detection   |
+|`edges`       |✓    |6 certified cross-layer projection edges, edge digests        |
+|`attention`   |✓    |CertifiedAttention, softmax, log-sum-exp, indexed variant     |
+|`feedforward` |✓    |TowerFFN, cross-layer projection, full upward pass            |
+|`transformer` |✓    |TowerTransformer, chained block digest, forward pass          |
+|`proposer`    |✓    |OpDistribution, RuleBasedProposer, TraceRecord, corpus digest |
+|`tower`       |✓    |unified artifact, root_digest, query, verify, trace corpus    |
+|`exec`        |✓    |PROJECT_SIGNATURE roundtrip, WORD nearest, new universes      |
 
 -----
 
@@ -209,11 +236,19 @@ A change to any element, any validation rule, or any signature bit definition pr
 src/
   phoneme.rs      Layer 1: 44 phonemes, 12-bit sig
   syllable.rs     Layer 2: ~423K syllables, phonotactic validator
-  morpheme.rs     Layer 3: 15 morphemes, allomorphy, meaning_id identity
+  morpheme.rs     Layer 3: 16 morphemes, allomorphy, meaning_id identity
   word.rs         Layer 4: 34,487 words, CMU+WordNet
   phrase.rs       Layer 5: grammar validator, parse trees
   semantic.rs     Layer 6: meaning graphs, paraphrase invariance
   discourse.rs    Layer 7: knowledge graphs, temporal order, coreference
+  layer.rs        Layer trait: unified interface over all 7 universes
+  sig_index.rs    Certified signature inverted index (O(sigs) WITNESS_NEAREST)
+  edges.rs        6 certified cross-layer projection edges with project/invert
+  attention.rs    CertifiedAttention: softmax over Hamming distances
+  feedforward.rs  TowerFFN: feed-forward as certified cross-layer projection
+  transformer.rs  TowerTransformer: block assembly, chained digest forward pass
+  proposer.rs     Probabilistic proposer: OpDistribution, RuleBasedProposer, TraceRecord
+  tower.rs        Unified Tower artifact: content-addressed, root_digest, full verify
   exec.rs         Executor: semtrace op runner, all universes
   verify.rs       Verifier: independent trace replay
   compiler.rs     NL query → semtrace ops compiler
@@ -228,19 +263,33 @@ runs/             Timestamped execution artifacts (trace.ndjson, proof.json, res
 
 -----
 
-## GPT-2 integration (proposer)
+## Transformer architecture
 
-The system is ready for a learned proposer. The rule is simple:
+This system is a recognizable transformer — it has attention, feed-forward, positional encoding, and a learned proposer. The difference is structural:
 
-> Any model may propose any semtrace string. Only traces that verify are accepted.
+> Standard transformer: weights store the world. This system: tower stores the world. Weights learn to navigate it.
 
-Practical options:
+| Component          | Standard transformer          | This system                                      |
+|--------------------|-------------------------------|--------------------------------------------------|
+| Attention          | Learned QKV over token embeds | CertifiedAttention: softmax over Hamming distances |
+| Feed-forward       | `max(0, xW₁+b₁)W₂+b₂`       | TowerFFN: certified cross-layer projection        |
+| Positional encoding| Sinusoidal / learned          | TowerPosition: layer depth + sequence + sig       |
+| Output             | Distribution over tokens      | Distribution over certified semtrace ops          |
+| Verifier           | None                          | Deterministic; rejects uncertified outputs        |
 
-- Export GPT-2 to ONNX and call it from Rust via `ort`
-- Run a Python proposer in a separate process and pipe proposed traces into `cargo run -- exec`
-- Fine-tune on verified traces to improve proposal quality over time
+### Proposer training (3 stages)
 
-The v0 repo ships a deterministic compiler (`src/compiler.rs`) so the full Proposer/Executor/Verifier pipeline can be validated without external model files.
+1. **Imitation** — `Tower::collect_trace_corpus()` generates verified traces via `RuleBasedProposer`. Train on these via supervised learning.
+2. **RL from verifier** — Binary reward: trace verifies = +1, fails = 0. No reward hacking (verifier is deterministic over certified universes).
+3. **Process supervision** — Reward each step digest in the chain, not just the final output.
+
+Practical integration options:
+
+- Export a small transformer to ONNX and call it from Rust via `ort`
+- Run a Python proposer in a separate process and pipe proposed ops into `cargo run -- exec`
+- Fine-tune GPT-2 on the verified trace corpus produced by `collect_trace_corpus`
+
+The repo ships `RuleBasedProposer` (`src/proposer.rs`) so the full pipeline can be validated without external model files.
 
 -----
 
