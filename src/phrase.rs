@@ -583,3 +583,152 @@ mod tests {
         assert_eq!(sig_distance(&inv[0], &inv[0]), 0);
     }
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct PhraseLayer {
+    inventory: Vec<Phrase>,
+}
+
+impl PhraseLayer {
+    pub fn new() -> Self {
+        let inv = build_phrase_inventory();
+        PhraseLayer { inventory: inv }
+    }
+}
+
+impl Default for PhraseLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for PhraseLayer {
+    fn id(&self) -> LayerId { LayerId::Phrase }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig
+    }
+
+    fn render(&self, i: usize) -> String {
+        let p = &self.inventory[i];
+        // phrase:<phrase_id>:<tree_s_expression>
+        fn render_node(node: &PhraseNode) -> String {
+            match node {
+                PhraseNode::Terminal { node_type, word } =>
+                    format!("[{}:{}]", node_type.as_str(), word),
+                PhraseNode::Inner { node_type, children } => {
+                    let kids: Vec<String> = children.iter().map(render_node).collect();
+                    format!("[{}{}]", node_type.as_str(), kids.join(""))
+                }
+            }
+        }
+        format!("phrase:{}:{}", p.phrase_id, render_node(&p.root))
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        phrase_universe_digest(&self.inventory)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn phrase_layer_len() {
+        let l = PhraseLayer::new();
+        assert_eq!(l.len(), 5);
+    }
+
+    #[test]
+    fn phrase_layer_render_nonempty() {
+        let l = PhraseLayer::new();
+        for i in 0..l.len() {
+            let r = l.render(i);
+            assert!(r.starts_with("phrase:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn phrase_layer_render_contains_brackets() {
+        let l = PhraseLayer::new();
+        for i in 0..l.len() {
+            let r = l.render(i);
+            assert!(r.contains('[') && r.contains(']'),
+                "render {} missing brackets: {}", i, r);
+        }
+    }
+
+    #[test]
+    fn phrase_layer_digest_stable() {
+        let l = PhraseLayer::new();
+        for i in 0..l.len() {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn phrase_layer_sig_matches_inventory() {
+        let l = PhraseLayer::new();
+        let inv = build_phrase_inventory();
+        for (i, p) in inv.iter().enumerate() {
+            assert_eq!(l.sig(i), p.sig);
+        }
+    }
+
+    #[test]
+    fn phrase_layer_nearest_self() {
+        let l = PhraseLayer::new();
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn phrase_layer_top_k() {
+        let l = PhraseLayer::new();
+        let k = l.top_k(l.sig(0), 3);
+        assert!(k.len() <= 3);
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn phrase_layer_universe_digest_stable() {
+        let l = PhraseLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn phrase_layer_witness_roundtrip() {
+        let l = PhraseLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Phrase);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+
+    #[test]
+    fn phrase_layer_render_has_s_root() {
+        let l = PhraseLayer::new();
+        // Most certified phrases are S→NP VP; at least one must have S root
+        let has_s = (0..l.len()).any(|i| l.render(i).contains("[S"));
+        assert!(has_s, "no phrase with S root found");
+        // All renders must start with phrase:
+        for i in 0..l.len() {
+            assert!(l.render(i).starts_with("phrase:"));
+        }
+    }
+}
