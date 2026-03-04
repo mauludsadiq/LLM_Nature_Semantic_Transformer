@@ -726,7 +726,12 @@ pub fn run_trace_and_write(
                     .get("metric")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("bad args for WITNESS_NEAREST"))?;
-                if is_word && metric == "HAMMING_SIG" {
+                if is_syllable && metric == "HAMMING_SIG" {
+                    let t_idx: usize = target.trim().parse().unwrap_or(0);
+                    if let Some(ts) = syllable_all.get(t_idx).cloned() {
+                        witness_syllable = syllable_set.iter().min_by_key(|s| syllable_sig_distance(s, &ts)).cloned();
+                    }
+                } else if is_word && metric == "HAMMING_SIG" {
                     // Word universe: nearest by signature Hamming distance
                     let t_text = target.trim().to_ascii_lowercase();
                     let t_word = word_all.iter().find(|w| w.text == t_text)
@@ -905,6 +910,8 @@ pub fn run_trace_and_write(
 
     let witness_s = if is_boolfun {
         witness_bf.as_ref().map(boolfun_to_string)
+    } else if is_syllable {
+        witness_syllable.as_ref().map(|s| format!("syllable:{}", String::from_utf8_lossy(&s.canonical_bytes()).chars().take(40).collect::<String>()))
     } else if is_word {
         witness_word.as_ref().map(|w| w.text.clone())
     } else if is_morpheme {

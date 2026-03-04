@@ -437,6 +437,12 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
                         .cloned()
                         .ok_or_else(|| anyhow!("empty word set"))?;
                     witness_word = Some(best);
+                } else if is_syllable && metric == "HAMMING_SIG" {
+                    use crate::syllable::sig_distance as syllable_sig_distance;
+                    let t_idx: usize = target.trim().parse().unwrap_or(0);
+                    if let Some(ts) = syllable_all.get(t_idx).cloned() {
+                        let _ = syllable_set.iter().min_by_key(|s| syllable_sig_distance(s, &ts));
+                    }
                 } else if is_morpheme && metric == "HAMMING_SIG" {
                     use crate::morpheme::sig_distance as morpheme_sig_distance;
                     let t_norm = target.trim().to_ascii_lowercase();
