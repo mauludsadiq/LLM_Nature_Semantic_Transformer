@@ -8,3 +8,4 @@ pub mod semtrace;
 pub mod verify;
 pub mod word;
 pub mod phoneme;
+pub mod syllable;
