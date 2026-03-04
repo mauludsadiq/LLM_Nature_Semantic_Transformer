@@ -1,182 +1,270 @@
-# LLM Nature — Semantic Transformer (Grounded Proposer/Executor/Verifier)
+# LLM Nature — Semantic Transformer
 
-This repo implements the **Semantic Transformer pivot**: the model is not a probabilistic truth-teller. It is a probabilistic **Proposer** of *execution traces* through a **certified finite semantic universe**. Truth is decided only by deterministic execution and replay verification.
+## Grounded Proposer / Executor / Verifier over a Certified 7-Layer Linguistic Universe
 
-In standard transformers, “reasoning” is next-token mimicry: the model emits a plausible continuation of text. That architecture has a structural failure mode: **hallucination** (plausible nonsense) because there is no grounded model that must be satisfied.
+-----
 
-This project replaces that with a **PEV loop**:
+## What this is
 
-- **Proposer (Transformer / GPT‑2)** proposes a *trace* (a sequence of discrete semantic operations).
-- **Executor (Finite Model Runtime)** executes the trace against a certified universe and emits **step digests**.
-- **Verifier (Replay Auditor)** re-executes every step and checks that all digests match.  
-  If any step is inconsistent, the trace is **invalid** and is rejected.
+This repository implements the **Semantic Transformer pivot**: a system in which a language model is not a probabilistic truth-teller but a probabilistic **Proposer** of *execution traces* through a **certified finite semantic universe**. Truth is decided only by deterministic execution and cryptographic replay verification.
 
-In this system, hallucination is not “wrong output.” It is an **invalid trace**, detected and rejected by deterministic verification.
+In standard transformers, “reasoning” is next-token mimicry: the model emits a plausible continuation of text. That architecture has a structural failure mode — **hallucination** — because there is no grounded model that must be satisfied. This repo builds that grounded model.
 
----
+The architecture has three roles:
 
-## What this project is derived from
+|Role        |What it does                                                           |
+|------------|-----------------------------------------------------------------------|
+|**Proposer**|Generates a candidate semtrace (ops sequence)                          |
+|**Executor**|Runs the trace deterministically; produces a witness and a digest chain|
+|**Verifier**|Replays the trace independently; certifies or rejects                  |
 
-This code is derived from the “Grounded Transformers / Semantic Engine” design built around:
+A trace is accepted only when `Executor` and `Verifier` agree on every step digest. No floating point is used for ordering or distance. All identity is structural.
 
-1. **A grounded universe** of rational numbers (QE) with a certified enumeration.
-2. **A fixed predicate family** that maps each element to a short semantic signature (7 bits).
-3. **A quotient partition** into realized semantic classes (55 realized signatures out of 128 possible).
-4. **Trace execution** with step digests (state hashes) and a chain hash anchor.
+-----
 
-This repo implements the minimal, executable v0 of that architecture:
-- deterministic QE construction (size 48,927),
-- 7-bit semantic signatures,
-- a minimal SemTrace instruction set,
-- executor output as NDJSON with step digests,
-- verifier replay.
+## The Tower: 7 Certified Linguistic Universes
 
----
+Language is modelled as a tower of finite, typed, digest-locked universes. Each layer depends on the one below it. Every element in every layer has a canonical byte encoding, a 16-bit structural signature, and a SHA-256 digest. The universe digest is a Merkle root over all element digests, bound to the layer’s validation rules.
 
-## The problem it solves
-
-**Problem:** LLMs generate text that *sounds right* but is not guaranteed to be *true* or even *coherent* under any grounded model. Confidence scores are not proof.
-
-**Solution:** Move semantics out of the transformer and into a certified state space. The model proposes *paths*; the runtime and verifier determine validity. Outputs are accompanied by **cryptographic evidence** (digests), not confidence.
-
-Concretely, we guarantee:
-
-- **Determinism:** same universe + same trace ⇒ same outputs, byte-for-byte.
-- **No hallucination:** any claim must correspond to a valid trace; invalid traces are rejected.
-- **Replayability:** verification is re-execution; there is no trust in the executor output.
-- **Human-legible artifacts:** each run writes a timestamped folder containing a paragraph artifact, trace NDJSON, digests, and a proof certificate.
-
----
-
-## The certified universe (QE)
-
-QE is built exactly as:
-
-- denominators `b ∈ [1, 200]`
-- numerators `a ∈ [-200, 200]`
-- reduce each fraction to lowest terms
-- take the set of unique reduced fractions
-
-This produces **48,927** unique rationals (matching the certified run you posted), with the maximum value `200/1`.
-
-Predicates (bit order, 0..6):
-
-0. `positive`      : numerator > 0
-1. `integer`       : denominator == 1
-2. `den<=6`        : denominator <= 6
-3. `num_even`      : numerator % 2 == 0
-4. `den_mod3`      : denominator % 3 == 0
-5. `proper`        : |numerator| < denominator
-6. `num_abs<=5`    : |numerator| <= 5
-
-The semantic signature of a rational is the 7-bit vector produced by these predicates.
-
----
-
-## What “Semantic Transformer” means here
-
-The transformer is allowed to output **only traces**. A trace is a small DSL over semantic constraints, for example:
-
-- START from an element (e.g. `7/200`)
-- force a predicate bit (e.g. `den<=6 = 1`)
-- query the universe for the matching set
-- pick a witness using a canonical nearest rule
-- return a deterministic paragraph artifact
-
-In v0, the included proposer is a deterministic stub that always produces a valid trace for a single fixed paragraph (so you can see the system “never waver”).
-The integration point for GPT‑2 is explicit: GPT‑2 proposes the trace text; the executor/verifier accept or reject.
-
----
-
-## Local setup (VS Code)
-
-### 1) Clone and build
-
-Open a terminal:
-
-```bash
-git clone <YOUR_REPO_URL_HERE> "LLM Nature Semantic Transformer"
-cd "LLM Nature Semantic Transformer"
-cargo build
+```
+Layer 7  DISCOURSE   5 certified graphs     16-bit sig
+           ↑ depends on
+Layer 6  SEMANTIC    6 certified graphs     16-bit sig
+           ↑ depends on
+Layer 5  PHRASE      5 certified parse trees  16-bit sig
+           ↑ depends on
+Layer 4  WORD        34,487 words             8-bit sig   (CMU + WordNet)
+           ↑ depends on
+Layer 3  MORPHEME    15 morphemes            16-bit sig
+           ↑ depends on
+Layer 2  SYLLABLE    ~423,000 syllables      16-bit sig
+           ↑ depends on
+Layer 1  PHONEME     44 phonemes             12-bit sig
 ```
 
-### 2) Run a deterministic demo (writes a timestamped run folder)
+### Layer 1 — PHONEME
 
-```bash
-cargo run -- demo
+44 English phonemes. Each phoneme has a 12-bit signature encoding manner, place, voicing, and vowel features. Universe digest is a Merkle root over all phoneme digests, bound to the IPA feature schema.
+
+### Layer 2 — SYLLABLE
+
+~423,000 valid English syllables generated by the phonotactic validator. Syllables are (onset, nucleus, coda) triples over phonemes. The validator enforces the Sonority Sequencing Principle with an exemption for S-extrasyllabic onsets. 16-bit signature encodes onset complexity, nucleus type, coda complexity, and stress features.
+
+### Layer 3 — MORPHEME
+
+15 certified morphemes covering the core English morphological inventory:
+
+- Free morphemes: `CAT`, `DOG`, `RUN`, `WALK`, `HAPPY`, `UN-`
+- Bound morphemes with allomorphy:
+  - Plural `-s` → `/s/`, `/z/`, `/ɪz/` (by final consonant voicing/sibilance)
+  - Past `-ed` → `/t/`, `/d/`, `/ɪd/` (by final consonant voicing)
+  - Indefinite article `a/an` (by following onset)
+  - Negation prefix `in-/im-/il-/ir-` (by place assimilation)
+
+Identity is `meaning_id`, not surface form. `/kæts/` and `/dɒgz/` share the same plural morpheme.
+
+### Layer 4 — WORD
+
+34,487 English words sourced from CMU Pronouncing Dictionary and WordNet. Each word has a canonical phonemic transcription, a part-of-speech tag, and an 8-bit signature. Nearest-word queries use Hamming distance over signatures.
+
+### Layer 5 — PHRASE
+
+5 certified parse trees over the grammar:
+
+```
+S  → NP VP
+NP → Det N | N | Det Adj N | NP PP
+VP → V | V NP | V NP PP | V PP
+PP → P NP
+AP → Adj | Adj AP
 ```
 
-This creates:
+Each tree node is typed (`S`, `NP`, `VP`, `PP`, `AP`, `N`, `V`, `Det`, `Adj`, `P`). Validation enforces head-complement constraints. Identity is tree structure, not word tokens. 16-bit signature encodes node-type presence, depth, and branching.
 
-- `runs/YYYYMMDD_HHMMSSZ/paragraph.txt` (the human-legible artifact)
-- `runs/YYYYMMDD_HHMMSSZ/trace.ndjson`   (step-by-step execution trace)
-- `runs/YYYYMMDD_HHMMSSZ/result.json`    (final result summary)
-- `runs/YYYYMMDD_HHMMSSZ/proof.json`     (verification certificate)
-- `runs/YYYYMMDD_HHMMSSZ/digests.json`   (domain/tests/trace chain hashes)
+### Layer 6 — SEMANTIC
 
-### 3) Verify an existing run
+6 certified directed labeled graphs. Nodes are typed concepts (`Entity`, `Event`, `Attribute`, `Quantity`, `Location`, `Time`). Edges are semantic relations (`Agent`, `Patient`, `Theme`, `Recipient`, `Location`, `Time`, `Manner`, `Cause`, `Possessor`, `Modifier`).
 
-Copy the `trace.ndjson` path from the run folder and execute:
+**Core principle:** meaning identity is graph structure, not surface form. Active and passive voice collapse to the same canonical graph:
+
+> “The cat chased the mouse” ≡ “The mouse was chased by the cat”
+
+Validation enforces: unique node IDs, typed edge constraints (agent/patient require Event→Entity), exactly one root event (single-root constraint), `max_nodes=64`, `max_edges=128`. Polarity (positive/negative) and tense (past/present/future) are graph-level features. 16-bit signature encodes relation presence, entity count, event count, polarity, and tense.
+
+### Layer 7 — DISCOURSE
+
+5 certified directed graphs over sequences of semantic graphs. Nodes are typed discourse units (`SemanticGraphRef`, `CoreferenceChain`, `UnknownReferent`). Edges are discourse relations (`Coreference`, `Causation`, `TemporalOrder`, `Contrast`, `Elaboration`, `Entailment`, `Background`, `Unknown`).
+
+**Key constraints:**
+
+- Temporal order edges must be **acyclic** (enforced by DFS cycle detection)
+- Self-loops are forbidden
+- Ambiguity that cannot be resolved becomes a `TruthStatus::Unknown` node — not an open interpretation
+- `max_nodes=512`, `max_edges=1024`
+
+16-bit signature encodes relation presence, graph count, coreference chain presence, negation, and resolved-ambiguity status.
+
+-----
+
+## The Semtrace Protocol
+
+Queries are expressed as **semtrace op sequences**. Each op is deterministic. Each step produces a `StepRec` with:
+
+- `pre`: set digest and count before the op
+- `post`: set digest, count, and witness after the op
+- `step_digest`: SHA-256 of `(chain, op, args, set_digest)` — cryptographic linkage
+
+The full trace is written as NDJSON. The verifier replays every step independently and checks that all step digests agree.
+
+### Supported ops
+
+|Op                                                |Description                                       |
+|--------------------------------------------------|--------------------------------------------------|
+|`SELECT_UNIVERSE universe=X`                      |Load and activate universe X                      |
+|`WITNESS_NEAREST target_elem=Y metric=HAMMING_SIG`|Find nearest element by signature Hamming distance|
+|`FILTER_WEIGHT min=A max=B`                       |Filter BoolFun universe by Hamming weight         |
+|`TOPK target_elem=Y k=N`                          |Keep top-K nearest elements                       |
+|`START_ELEM elem=E`                               |Set starting element and witness                  |
+|`SET_BIT i=N b=B`                                 |Apply bit constraint to current set               |
+|`PROJECT_SIGNATURE elem=E`                        |Project QE element to BoolFun signature universe  |
+|`JOIN_NEAREST`                                    |Cross-universe nearest join                       |
+|`RETURN_SET max_items=N include_witness=1`        |Emit result sample                                |
+
+### Universe identifiers
+
+|Universe   |Aliases                      |
+|-----------|-----------------------------|
+|`PHONEME`  |`PH`, `PHONE`                |
+|`SYLLABLE` |`SYL`, `SYLLABLE`            |
+|`MORPHEME` |`MORPH`, `MORPHEME`          |
+|`WORD`     |`WORD`, `EN`                 |
+|`PHRASE`   |`PHRASE`, `PHR`              |
+|`SEMANTIC` |`SEMANTIC`, `SEM`, `SEMGRAPH`|
+|`DISCOURSE`|`DISCOURSE`, `DIS`, `DISC`   |
+|`BOOLFUN`  |`BF`, `BOOLFUN`              |
+|`QE`       |`QE` (rational numbers)      |
+
+-----
+
+## Usage
 
 ```bash
-cargo run -- verify --trace runs/YYYYMMDD_HHMMSSZ/trace.ndjson
+# Build
+cargo build --release
+
+# Run a query
+cargo run -- 'SELECT_UNIVERSE universe=SEMANTIC; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
+
+# Run all layers
+cargo run -- 'SELECT_UNIVERSE universe=WORD; WITNESS_NEAREST target_elem=abandon metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
+cargo run -- 'SELECT_UNIVERSE universe=PHRASE; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
+cargo run -- 'SELECT_UNIVERSE universe=DISCOURSE; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=3 include_witness=1'
+
+# Verify a trace
+cargo run -- verify --trace runs/<TIMESTAMP>/trace.ndjson
+
+# Run tests
+cargo test
 ```
 
-Exit code:
-- `0` = VALID
-- `1` = INVALID
+-----
 
----
+## Test suite
 
-## Running in a separate terminal
+89 tests across all 7 layers and the executor/verifier pipeline.
 
-Terminal A (run demo):
+|Module     |Tests|Coverage                                                |
+|-----------|-----|--------------------------------------------------------|
+|`phoneme`  |✓    |inventory, signatures, digests                          |
+|`syllable` |✓    |phonotactics, validator, signatures                     |
+|`morpheme` |✓    |allomorphy, meaning_id identity, signatures             |
+|`word`     |✓    |CMU+WordNet inventory, nearest-word                     |
+|`phrase`   |✓    |grammar validator, parse trees, signatures              |
+|`semantic` |✓    |graph validation, paraphrase invariance, signatures     |
+|`discourse`|✓    |temporal acyclicity, coreference, typed unknown         |
+|`exec`     |✓    |PROJECT_SIGNATURE roundtrip, WORD nearest, new universes|
 
-```bash
-cargo run -- demo
+-----
+
+## Cryptographic spine
+
+Every layer’s universe digest is computed as:
+
+```
+universe_digest = SHA-256(
+    "universe_name_v1"
+    || SHA-256(rules_string)
+    || SHA-256(bit_legend)
+    || merkle_root(sorted element digests)
+)
 ```
 
-Terminal B (verify latest run):
+A change to any element, any validation rule, or any signature bit definition propagates to the universe digest and breaks all downstream traces that depend on it. This makes the system tamper-evident by construction.
 
-```bash
-cargo run -- verify --trace runs/<PASTE_LATEST_FOLDER>/trace.ndjson
-```
-
----
-
-## GPT‑2 integration (proposer)
-
-This repo is ready for GPT‑2 as the **trace proposer**. The rule is simple:
-
-> GPT‑2 may propose any trace string, but only traces that verify are accepted.
-
-Practical options:
-- Export GPT‑2 to ONNX and call it from Rust (onnxruntime / ort).
-- Run GPT‑2 in a separate process (Python) and pipe the proposed trace into `cargo run -- exec`.
-
-This v0 repo ships a deterministic proposer (`demo`) so you can validate the PEV pipeline without external model files.
-
----
-
-## Notes on determinism
-
-- No floating point is used for ordering or distance.
-- Nearest witness selection uses exact rational distance:
-  |a/b - c/d| = |ad - bc| / (bd)
-  compared by cross-multiplication.
-
-This ensures Rust and any other reference executor will agree exactly.
-
----
+-----
 
 ## Repo layout
 
-- `src/` — executor, verifier, QE universe, predicates, digests
-- `artifact/paragraph.txt` — the “never wavering” paragraph
-- `runs/` — timestamped run outputs (created at runtime)
+```
+src/
+  phoneme.rs      Layer 1: 44 phonemes, 12-bit sig
+  syllable.rs     Layer 2: ~423K syllables, phonotactic validator
+  morpheme.rs     Layer 3: 15 morphemes, allomorphy, meaning_id identity
+  word.rs         Layer 4: 34,487 words, CMU+WordNet
+  phrase.rs       Layer 5: grammar validator, parse trees
+  semantic.rs     Layer 6: meaning graphs, paraphrase invariance
+  discourse.rs    Layer 7: knowledge graphs, temporal order, coreference
+  exec.rs         Executor: semtrace op runner, all universes
+  verify.rs       Verifier: independent trace replay
+  compiler.rs     NL query → semtrace ops compiler
+  semtrace.rs     Step digest, constraint, sig7
+  digest.rs       SHA-256, Merkle root
+  boolfun.rs      Boolean function universe
+  qe.rs           Rational number universe
+  geom.rs         Geometric universe
+  main.rs         CLI entry point
+runs/             Timestamped execution artifacts (trace.ndjson, proof.json, result.json)
+```
 
----
+-----
+
+## GPT-2 integration (proposer)
+
+The system is ready for a learned proposer. The rule is simple:
+
+> Any model may propose any semtrace string. Only traces that verify are accepted.
+
+Practical options:
+
+- Export GPT-2 to ONNX and call it from Rust via `ort`
+- Run a Python proposer in a separate process and pipe proposed traces into `cargo run -- exec`
+- Fine-tune on verified traces to improve proposal quality over time
+
+The v0 repo ships a deterministic compiler (`src/compiler.rs`) so the full Proposer/Executor/Verifier pipeline can be validated without external model files.
+
+-----
+
+## Notes on determinism
+
+- No floating point is used for ordering or distance
+- Nearest-witness selection uses exact integer Hamming distance over 16-bit signatures
+- Rational distance uses cross-multiplication: `|a/b − c/d| = |ad − bc| / (bd)`
+- Canonical byte encodings sort keys lexicographically — identical structure produces identical bytes on any platform
+
+-----
+
+## Dependencies
+
+|Crate                 |Purpose             |
+|----------------------|--------------------|
+|`serde` / `serde_json`|Trace serialization |
+|`sha2`                |SHA-256 digests     |
+|`anyhow`              |Error handling      |
+|`chrono`              |Trace timestamps    |
+|`clap`                |CLI argument parsing|
+|`regex`               |NL compiler patterns|
+
+-----
 
 ## License
-
-MIT OR Apache-2.0
+MUI
