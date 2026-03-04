@@ -653,3 +653,189 @@ mod tests {
         assert!((g.sig >> 4) & 1 == 1, "elaboration_present");
     }
 }
+
+// ── Layer trait implementation ────────────────────────────────────────────────
+
+use crate::layer::{Layer, LayerId};
+
+pub struct DiscourseLayer {
+    inventory: Vec<DiscourseGraph>,
+}
+
+impl DiscourseLayer {
+    pub fn new() -> Self {
+        let mut inv = build_discourse_inventory();
+        for g in inv.iter_mut() {
+            g.sig = sig16(g);
+        }
+        DiscourseLayer { inventory: inv }
+    }
+}
+
+impl Default for DiscourseLayer {
+    fn default() -> Self { Self::new() }
+}
+
+impl Layer for DiscourseLayer {
+    fn id(&self) -> LayerId { LayerId::Discourse }
+
+    fn len(&self) -> usize { self.inventory.len() }
+
+    fn canonical_bytes(&self, i: usize) -> Vec<u8> {
+        self.inventory[i].canonical_bytes()
+    }
+
+    fn sig(&self, i: usize) -> u16 {
+        self.inventory[i].sig
+    }
+
+    fn render(&self, i: usize) -> String {
+        let g = &self.inventory[i];
+        // disc:<discourse_id>:<node_labels joined by relation arrows>
+        // Format: disc:1:chase(cat,mouse)→[temporal_order]→run_away(mouse)[coref:it=mouse]
+
+        // Collect SemanticGraphRef nodes in sequence order
+        let mut seq_nodes: Vec<&DiscourseNode> = g.nodes.iter()
+            .filter(|n| n.node_type == DiscourseNodeType::SemanticGraphRef)
+            .collect();
+        seq_nodes.sort_by_key(|n| n.sequence_pos);
+
+        let node_part = seq_nodes.iter()
+            .map(|n| n.label.as_str())
+            .collect::<Vec<_>>()
+            .join("→");
+
+        // Collect coreference chains
+        let coref_part: Vec<String> = g.nodes.iter()
+            .filter(|n| n.node_type == DiscourseNodeType::CoreferenceChain)
+            .map(|n| format!("[coref:{}]", n.label))
+            .collect();
+
+        // Collect unknown referents
+        let unknown_part: Vec<String> = g.nodes.iter()
+            .filter(|n| n.node_type == DiscourseNodeType::UnknownReferent)
+            .map(|n| format!("[unknown:{}]", n.label))
+            .collect();
+
+        // Collect relation types present
+        let mut rels: Vec<&str> = g.edges.iter()
+            .map(|e| e.relation.as_str())
+            .collect();
+        rels.sort();
+        rels.dedup();
+        let rel_part = if rels.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", rels.join(","))
+        };
+
+        let mut parts = vec![node_part];
+        parts.extend(coref_part);
+        parts.extend(unknown_part);
+        if !rel_part.is_empty() { parts.push(rel_part); }
+
+        format!("disc:{}:{}", g.discourse_id, parts.join(""))
+    }
+
+    fn universe_digest(&self) -> [u8; 32] {
+        discourse_universe_digest(&self.inventory)
+    }
+}
+
+// ── Additional tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    #[test]
+    fn discourse_layer_len() {
+        let l = DiscourseLayer::new();
+        assert_eq!(l.len(), 5);
+    }
+
+    #[test]
+    fn discourse_layer_render_nonempty() {
+        let l = DiscourseLayer::new();
+        for i in 0..l.len() {
+            let r = l.render(i);
+            assert!(r.starts_with("disc:"), "render {} = {}", i, r);
+        }
+    }
+
+    #[test]
+    fn discourse_layer_render_contains_arrow() {
+        // discourse 1 has two SemanticGraphRef nodes in sequence
+        let l = DiscourseLayer::new();
+        let r = l.render(0);
+        assert!(r.contains('→'), "expected arrow in: {}", r);
+    }
+
+    #[test]
+    fn discourse_layer_digest_stable() {
+        let l = DiscourseLayer::new();
+        for i in 0..l.len() {
+            assert_eq!(l.digest(i), l.digest(i));
+        }
+    }
+
+    #[test]
+    fn discourse_layer_sig_matches_sig16() {
+        let l = DiscourseLayer::new();
+        let inv = build_discourse_inventory();
+        for (i, g) in inv.iter().enumerate() {
+            assert_eq!(l.sig(i), sig16(g));
+        }
+    }
+
+    #[test]
+    fn discourse_layer_nearest_self() {
+        let l = DiscourseLayer::new();
+        let s = l.sig(0);
+        let n = l.nearest(s).unwrap();
+        assert_eq!(l.sig_distance(l.sig(n), s), 0);
+    }
+
+    #[test]
+    fn discourse_layer_top_k() {
+        let l = DiscourseLayer::new();
+        let k = l.top_k(l.sig(0), 3);
+        assert!(k.len() <= 3);
+        if k.len() >= 2 {
+            assert!(l.sig_distance(l.sig(k[0]), l.sig(0))
+                 <= l.sig_distance(l.sig(k[1]), l.sig(0)));
+        }
+    }
+
+    #[test]
+    fn discourse_layer_universe_digest_stable() {
+        let l = DiscourseLayer::new();
+        assert_eq!(l.universe_digest(), l.universe_digest());
+    }
+
+    #[test]
+    fn discourse_layer_witness_roundtrip() {
+        let l = DiscourseLayer::new();
+        let w = l.witness(0);
+        assert_eq!(w.layer, crate::layer::LayerId::Discourse);
+        assert!(!w.rendered.is_empty());
+        assert_eq!(w.digest, l.digest(0));
+    }
+
+    #[test]
+    fn discourse_layer_coref_rendered() {
+        let l = DiscourseLayer::new();
+        // discourse 1: "The cat chased the mouse. It ran away." — has coref
+        let r = l.render(0);
+        assert!(r.contains("coref"), "expected coref in: {}", r);
+    }
+
+    #[test]
+    fn discourse_layer_unknown_rendered() {
+        let l = DiscourseLayer::new();
+        // discourse 4: has unknown referent
+        let unknown_idx = (0..l.len()).find(|&i| l.render(i).contains("unknown"));
+        assert!(unknown_idx.is_some(), "no discourse with unknown referent rendered");
+    }
+}
