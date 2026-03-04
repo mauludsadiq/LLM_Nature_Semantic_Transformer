@@ -19,3 +19,4 @@ pub mod edges;
 pub mod attention;
 pub mod feedforward;
 pub mod transformer;
+pub mod proposer;
