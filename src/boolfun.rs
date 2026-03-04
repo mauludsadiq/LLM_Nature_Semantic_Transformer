@@ -2,33 +2,56 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 pub fn is_boolfun_universe(u_norm: &str) -> bool {
-    matches!(u_norm,
-        "BOOLFUN"|"BOOLFUN<N>"|"BOOLFUN4"|"BOOLFUN_4"|"BOOLFUNV0"|"BOOLFUNV1"|
-        "BOOLFUNS"|"BOOLFUNS<N>"|"BOOLFUNS4"|"BOOLFUNS_4"|"BOOLFUNS_V0"|"BOOLFUNS_V1"|
-        "BOOLFUN7"|"BOOLFUN_7"|"BOOLFUN<N=7>"|"BOOLFUNSIG7"|"BOOLFUNSIG_7"
+    matches!(
+        u_norm,
+        "BOOLFUN"
+            | "BOOLFUN<N>"
+            | "BOOLFUN4"
+            | "BOOLFUN_4"
+            | "BOOLFUNV0"
+            | "BOOLFUNV1"
+            | "BOOLFUNS"
+            | "BOOLFUNS<N>"
+            | "BOOLFUNS4"
+            | "BOOLFUNS_4"
+            | "BOOLFUNS_V0"
+            | "BOOLFUNS_V1"
+            | "BOOLFUN7"
+            | "BOOLFUN_7"
+            | "BOOLFUN<N=7>"
+            | "BOOLFUNSIG7"
+            | "BOOLFUNSIG_7"
     )
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct BoolFun {
-    pub n: u8,      // number of input vars
-    pub bits: u64,  // packed truth-table outputs, LSB = input 0..0
+    pub n: u8,     // number of input vars
+    pub bits: u64, // packed truth-table outputs, LSB = input 0..0
 }
 
 impl BoolFun {
     /// Number of rows in truth table = 2^n.
     pub fn rows(&self) -> u32 {
         // Special universe: n=7 represents a 7-bit signature element (128 elems), not a 2^n truth-table.
-        if self.n == 7 { return 7; }
+        if self.n == 7 {
+            return 7;
+        }
         1u32 << (self.n as u32)
     }
 
     /// Mask of valid output bits (low 2^n bits).
     pub fn mask(&self) -> u64 {
         // n=7 signature universe: only low 7 bits are meaningful.
-        if self.n == 7 { return 0x7f; }
+        if self.n == 7 {
+            return 0x7f;
+        }
         let r = self.rows();
-        if r == 64 { u64::MAX } else { (1u64 << r) - 1 }
+        if r == 64 {
+            u64::MAX
+        } else {
+            (1u64 << r) - 1
+        }
     }
 
     /// Canonical bytes for hashing/merkle: fixed 9 bytes = [n:u8] + [bits:u64 BE].
@@ -57,7 +80,9 @@ impl BoolFun {
 /// Canonical total order: (n ascending, bits ascending).
 pub fn canonical_cmp(a: &BoolFun, b: &BoolFun) -> Ordering {
     let o1 = a.n.cmp(&b.n);
-    if o1 != Ordering::Equal { return o1; }
+    if o1 != Ordering::Equal {
+        return o1;
+    }
     a.bits.cmp(&b.bits)
 }
 
@@ -66,27 +91,27 @@ pub fn canonical_cmp(a: &BoolFun, b: &BoolFun) -> Ordering {
 /// - For smaller n: generate full space 0..2^(2^n)-1.
 /// Note: capped at n<=6 (64 rows) to keep bits in u64.
 pub fn build_boolfun(n: u8) -> Vec<BoolFun> {
-        // Special universe: n=7 is a 7-bit signature space (0..127), not the full 2^(2^n) truth-table space.
-        if n == 7 {
-            let mut v: Vec<BoolFun> = Vec::with_capacity(128);
-            for bits in 0u64..128u64 {
-                v.push(BoolFun { n, bits });
-            }
-            v.sort_by(canonical_cmp);
-            return v;
-        }
-
-        let rows = 1u32 << (n as u32);
-        assert!(rows <= 64, "BoolFun n too large for u64 packing");
-        let total: u64 = if rows == 64 { u64::MAX } else { 1u64 << rows };
-
-        let mut v: Vec<BoolFun> = Vec::with_capacity(total as usize);
-        for bits in 0..total {
+    // Special universe: n=7 is a 7-bit signature space (0..127), not the full 2^(2^n) truth-table space.
+    if n == 7 {
+        let mut v: Vec<BoolFun> = Vec::with_capacity(128);
+        for bits in 0u64..128u64 {
             v.push(BoolFun { n, bits });
         }
         v.sort_by(canonical_cmp);
-        v
+        return v;
     }
+
+    let rows = 1u32 << (n as u32);
+    assert!(rows <= 64, "BoolFun n too large for u64 packing");
+    let total: u64 = if rows == 64 { u64::MAX } else { 1u64 << rows };
+
+    let mut v: Vec<BoolFun> = Vec::with_capacity(total as usize);
+    for bits in 0..total {
+        v.push(BoolFun { n, bits });
+    }
+    v.sort_by(canonical_cmp);
+    v
+}
 
 /// Parse element encodings:
 /// - "0xBEEF" (hex, implies n=4)
@@ -101,50 +126,82 @@ pub fn parse_elem(s: &str) -> Option<BoolFun> {
 
     if let Some(hexs) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         let bits = u64::from_str_radix(hexs.trim(), 16).ok()?;
-        return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
+        return Some(BoolFun {
+            n: 4,
+            bits: bits & 0xFFFF,
+        });
     }
 
     if let Some(ds) = t.strip_prefix("u16:") {
         let bits: u64 = ds.trim().parse::<u64>().ok()?;
-        return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
+        return Some(BoolFun {
+            n: 4,
+            bits: bits & 0xFFFF,
+        });
     }
 
     if let Some(b0) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
-          let b = b0.trim();
-          if b.is_empty() { return None; }
-          if !b.chars().all(|c| c == '0' || c == '1') { return None; }
-          // 0b... parsing:
-          // - if <=7 bits: signature element (n=7, bits in 0..127)
-          // - else (<=16 bits): packed u16 truth-table (n=4), MSB..LSB
-          if b.len() > 16 { return None; }
-          let mut bits: u64 = 0;
-          for ch in b.chars() {
-              bits <<= 1;
-              if ch == '1' { bits |= 1; }
-          }
-          if b.len() <= 7 {
-              return Some(BoolFun { n: 7, bits: bits & 0x7f });
-          }
-          return Some(BoolFun { n: 4, bits: bits & 0xFFFF });
-      }
-      if let Some(bs) = t.strip_prefix("bin:") {
+        let b = b0.trim();
+        if b.is_empty() {
+            return None;
+        }
+        if !b.chars().all(|c| c == '0' || c == '1') {
+            return None;
+        }
+        // 0b... parsing:
+        // - if <=7 bits: signature element (n=7, bits in 0..127)
+        // - else (<=16 bits): packed u16 truth-table (n=4), MSB..LSB
+        if b.len() > 16 {
+            return None;
+        }
+        let mut bits: u64 = 0;
+        for ch in b.chars() {
+            bits <<= 1;
+            if ch == '1' {
+                bits |= 1;
+            }
+        }
+        if b.len() <= 7 {
+            return Some(BoolFun {
+                n: 7,
+                bits: bits & 0x7f,
+            });
+        }
+        return Some(BoolFun {
+            n: 4,
+            bits: bits & 0xFFFF,
+        });
+    }
+    if let Some(bs) = t.strip_prefix("bin:") {
         let b = bs.trim();
-        if b.is_empty() { return None; }
-        if !b.chars().all(|c| c == '0' || c == '1') { return None; }
+        if b.is_empty() {
+            return None;
+        }
+        if !b.chars().all(|c| c == '0' || c == '1') {
+            return None;
+        }
 
         let len = b.len() as u32;
         // len must be a power of two: len = 2^n
-        if len == 0 || (len & (len - 1)) != 0 { return None; }
+        if len == 0 || (len & (len - 1)) != 0 {
+            return None;
+        }
 
         let n = (len as f64).log2() as u8;
-        if (1u32 << (n as u32)) != len { return None; }
-        if len > 64 { return None; }
+        if (1u32 << (n as u32)) != len {
+            return None;
+        }
+        if len > 64 {
+            return None;
+        }
 
         // Interpret string as MSB..LSB of packed value
         let mut bits: u64 = 0;
         for ch in b.chars() {
             bits <<= 1;
-            if ch == '1' { bits |= 1; }
+            if ch == '1' {
+                bits |= 1;
+            }
         }
         return Some(BoolFun { n, bits });
     }
@@ -188,5 +245,4 @@ mod tests {
         assert_eq!(f.bits, 0b1010101);
         assert_eq!(f.mask(), 0x7f);
     }
-
 }

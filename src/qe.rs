@@ -16,7 +16,11 @@ fn gcd(mut a: i32, mut b: i32) -> i32 {
         a = b;
         b = r;
     }
-    if a == 0 { 1 } else { a }
+    if a == 0 {
+        1
+    } else {
+        a
+    }
 }
 
 impl Frac {
@@ -24,9 +28,15 @@ impl Frac {
         assert!(den != 0);
         let mut n = num;
         let mut d = den;
-        if d < 0 { n = -n; d = -d; }
+        if d < 0 {
+            n = -n;
+            d = -d;
+        }
         let g = gcd(n, d);
-        Frac { num: n / g, den: d / g }
+        Frac {
+            num: n / g,
+            den: d / g,
+        }
     }
 
     /// Canonical bytes for hashing/merkle: fixed 8 bytes (i32 num, i32 den) big-endian.
@@ -47,7 +57,9 @@ impl Frac {
         (a * d).cmp(&(c * b))
     }
 
-    pub fn abs_num(&self) -> i32 { self.num.abs() }
+    pub fn abs_num(&self) -> i32 {
+        self.num.abs()
+    }
 }
 
 /// Canonical total order used everywhere (sets, merkle leaves, witness tie-breaks):
@@ -57,11 +69,17 @@ impl Frac {
 /// 4) sign (negative < positive)
 pub fn canonical_cmp(a: &Frac, b: &Frac) -> Ordering {
     let o1 = a.cmp_value(b);
-    if o1 != Ordering::Equal { return o1; }
+    if o1 != Ordering::Equal {
+        return o1;
+    }
     let o2 = a.abs_num().cmp(&b.abs_num());
-    if o2 != Ordering::Equal { return o2; }
+    if o2 != Ordering::Equal {
+        return o2;
+    }
     let o3 = a.den.cmp(&b.den);
-    if o3 != Ordering::Equal { return o3; }
+    if o3 != Ordering::Equal {
+        return o3;
+    }
     a.num.cmp(&b.num) // negative < positive if everything else equal
 }
 
@@ -75,7 +93,10 @@ pub fn build_qe() -> Vec<Frac> {
             set.insert((f.num, f.den));
         }
     }
-    let mut v: Vec<Frac> = set.into_iter().map(|(n,d)| Frac{num:n,den:d}).collect();
+    let mut v: Vec<Frac> = set
+        .into_iter()
+        .map(|(n, d)| Frac { num: n, den: d })
+        .collect();
     v.sort_by(canonical_cmp);
     v
 }
@@ -83,10 +104,14 @@ pub fn build_qe() -> Vec<Frac> {
 /// Parse "a/b" into reduced Frac.
 pub fn parse_frac(s: &str) -> Option<Frac> {
     let parts: Vec<&str> = s.trim().split('/').collect();
-    if parts.len() != 2 { return None; }
+    if parts.len() != 2 {
+        return None;
+    }
     let num: i32 = parts[0].parse().ok()?;
     let den: i32 = parts[1].parse().ok()?;
-    if den == 0 { return None; }
+    if den == 0 {
+        return None;
+    }
     Some(Frac::new_reduced(num, den))
 }
 

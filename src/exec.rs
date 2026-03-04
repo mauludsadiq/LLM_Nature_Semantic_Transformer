@@ -5,11 +5,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[allow(unused_imports)]
+use crate::boolfun::{
+    build_boolfun, canonical_cmp as boolfun_canonical_cmp, is_boolfun_universe,
+    parse_elem as parse_boolfun, BoolFun,
+};
 use crate::digest::{merkle_root, sha256_bytes};
 use crate::qe::{build_qe, canonical_cmp, parse_frac, Frac};
 use crate::semtrace::{sig7, sig7_geom, Constraint};
-#[allow(unused_imports)]
-use crate::boolfun::{build_boolfun, parse_elem as parse_boolfun, canonical_cmp as boolfun_canonical_cmp, BoolFun, is_boolfun_universe};
 
 #[derive(Debug)]
 pub struct ExecutionResult {
@@ -193,7 +196,9 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
             }
             if n.is_none() {
                 n = parse_kv_u64(t, "n");
-                if n.is_some() { continue; }
+                if n.is_some() {
+                    continue;
+                }
             }
             if universe.is_none() && j == 1 && !t.contains("=") {
                 universe = Some(t.to_string());
@@ -201,7 +206,10 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
         }
         let universe = universe.ok_or_else(|| anyhow!("SELECT_UNIVERSE missing universe="))?;
         let n = n.ok_or_else(|| anyhow!("SELECT_UNIVERSE missing n="))? as u8;
-        return Ok(("SELECT_UNIVERSE".to_string(), json!({ "universe": universe, "n": n })));
+        return Ok((
+            "SELECT_UNIVERSE".to_string(),
+            json!({ "universe": universe, "n": n }),
+        ));
     }
 
     if s.starts_with("FILTER_WEIGHT") {
@@ -210,12 +218,19 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
         let mut min: Option<u64> = None;
         let mut max: Option<u64> = None;
         for t in toks.iter().skip(1) {
-            if min.is_none() { min = parse_kv_u64(t, "min"); }
-            if max.is_none() { max = parse_kv_u64(t, "max"); }
+            if min.is_none() {
+                min = parse_kv_u64(t, "min");
+            }
+            if max.is_none() {
+                max = parse_kv_u64(t, "max");
+            }
         }
         let min = min.ok_or_else(|| anyhow!("FILTER_WEIGHT missing min="))? as u32;
         let max = max.ok_or_else(|| anyhow!("FILTER_WEIGHT missing max="))? as u32;
-        return Ok(("FILTER_WEIGHT".to_string(), json!({ "min": min, "max": max })));
+        return Ok((
+            "FILTER_WEIGHT".to_string(),
+            json!({ "min": min, "max": max }),
+        ));
     }
 
     if s.starts_with("TOPK") {
@@ -230,13 +245,17 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
             if target.is_none() && t.starts_with("target_elem=") {
                 target = Some(t.trim_start_matches("target_elem=").to_string());
             }
-            if k.is_none() { k = parse_kv_u64(t, "k"); }
+            if k.is_none() {
+                k = parse_kv_u64(t, "k");
+            }
         }
         let target_elem = target.ok_or_else(|| anyhow!("TOPK missing target="))?;
         let k = k.ok_or_else(|| anyhow!("TOPK missing k="))? as usize;
-        return Ok(("TOPK".to_string(), json!({ "target_elem": target_elem, "k": k })));
+        return Ok((
+            "TOPK".to_string(),
+            json!({ "target_elem": target_elem, "k": k }),
+        ));
     }
-
 
     if s.starts_with("WITNESS_NEAREST") {
         // expected: WITNESS_NEAREST target=13/37 (metric defaults ABS_DIFF)
@@ -251,7 +270,11 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
                 target = Some(t.trim_start_matches("target_elem=").to_string());
             }
             if metric.is_none() && t.starts_with("metric=") {
-                metric = Some(t.trim_start_matches("metric=").trim_end_matches(|c: char| c==';' || c==',').to_string());
+                metric = Some(
+                    t.trim_start_matches("metric=")
+                        .trim_end_matches(|c: char| c == ';' || c == ',')
+                        .to_string(),
+                );
             }
         }
         let target_elem = target.ok_or_else(|| anyhow!("WITNESS_NEAREST missing target="))?;
@@ -263,56 +286,62 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
     }
 
     if s.starts_with("JOIN_NEAREST") {
-            // expected: JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF
-            let toks: Vec<&str> = s.split_whitespace().collect();
-            let mut left_universe: Option<String> = None;
-            let mut right_universe: Option<String> = None;
-            let mut left_elem: Option<String> = None;
-            let mut right_elem: Option<String> = None;
-            let mut metric: Option<String> = None;
+        // expected: JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF
+        let toks: Vec<&str> = s.split_whitespace().collect();
+        let mut left_universe: Option<String> = None;
+        let mut right_universe: Option<String> = None;
+        let mut left_elem: Option<String> = None;
+        let mut right_elem: Option<String> = None;
+        let mut metric: Option<String> = None;
 
-            for t in toks.iter().skip(1) {
-                if left_universe.is_none() && t.starts_with("left_universe=") {
-                    left_universe = Some(t.trim_start_matches("left_universe=").to_string());
-                    continue;
-                }
-                if right_universe.is_none() && t.starts_with("right_universe=") {
-                    right_universe = Some(t.trim_start_matches("right_universe=").to_string());
-                    continue;
-                }
-                if left_elem.is_none() && t.starts_with("left_elem=") {
-                    left_elem = Some(t.trim_start_matches("left_elem=").to_string());
-                    continue;
-                }
-                if right_elem.is_none() && t.starts_with("right_elem=") {
-                    right_elem = Some(t.trim_start_matches("right_elem=").to_string());
-                    continue;
-                }
-                if metric.is_none() && t.starts_with("metric=") {
-                    metric = Some(t.trim_start_matches("metric=").trim_end_matches(|c: char| c==';' || c==',').to_string());
-                    continue;
-                }
+        for t in toks.iter().skip(1) {
+            if left_universe.is_none() && t.starts_with("left_universe=") {
+                left_universe = Some(t.trim_start_matches("left_universe=").to_string());
+                continue;
             }
-
-            let left_universe = left_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe="))?;
-            let right_universe = right_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe="))?;
-            let left_elem = left_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem="))?;
-            let right_elem = right_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem="))?;
-            let metric = metric.unwrap_or_else(|| "ABS_DIFF".to_string());
-
-            return Ok((
-                "JOIN_NEAREST".to_string(),
-                json!({
-                    "left_universe": left_universe,
-                    "right_universe": right_universe,
-                    "left_elem": left_elem,
-                    "right_elem": right_elem,
-                    "metric": metric
-                }),
-            ));
+            if right_universe.is_none() && t.starts_with("right_universe=") {
+                right_universe = Some(t.trim_start_matches("right_universe=").to_string());
+                continue;
+            }
+            if left_elem.is_none() && t.starts_with("left_elem=") {
+                left_elem = Some(t.trim_start_matches("left_elem=").to_string());
+                continue;
+            }
+            if right_elem.is_none() && t.starts_with("right_elem=") {
+                right_elem = Some(t.trim_start_matches("right_elem=").to_string());
+                continue;
+            }
+            if metric.is_none() && t.starts_with("metric=") {
+                metric = Some(
+                    t.trim_start_matches("metric=")
+                        .trim_end_matches(|c: char| c == ';' || c == ',')
+                        .to_string(),
+                );
+                continue;
+            }
         }
 
-        if s.starts_with("RETURN_SET") {
+        let left_universe =
+            left_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe="))?;
+        let right_universe =
+            right_universe.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe="))?;
+        let left_elem = left_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem="))?;
+        let right_elem = right_elem.ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem="))?;
+        let metric = metric.unwrap_or_else(|| "ABS_DIFF".to_string());
+
+        return Ok((
+            "JOIN_NEAREST".to_string(),
+            json!({
+                "left_universe": left_universe,
+                "right_universe": right_universe,
+                "left_elem": left_elem,
+                "right_elem": right_elem,
+                "metric": metric
+            }),
+        ));
+    }
+
+    if s.starts_with("RETURN_SET") {
         // expected: RETURN_SET max_items=10 include_witness=true
         let toks: Vec<&str> = s.split_whitespace().collect();
         let mut max_items: usize = 20;
@@ -330,14 +359,18 @@ fn parse_op_to_semtrace(op: &str) -> Result<(String, JsonValue)> {
             json!({ "max_items": max_items, "include_witness": include_witness }),
         ));
     }
-  if s.starts_with("PROJECT_SIGNATURE") {
-      let toks: Vec<&str> = s.split_whitespace().collect();
-      let elem = toks.iter().skip(1).find_map(|t| t.strip_prefix("elem=")).or_else(|| toks.get(1).copied())
-          .ok_or_else(|| anyhow!("PROJECT_SIGNATURE missing elem"))?;
-      return Ok(("PROJECT_SIGNATURE".to_string(), json!({ "elem": elem })));
-  }
+    if s.starts_with("PROJECT_SIGNATURE") {
+        let toks: Vec<&str> = s.split_whitespace().collect();
+        let elem = toks
+            .iter()
+            .skip(1)
+            .find_map(|t| t.strip_prefix("elem="))
+            .or_else(|| toks.get(1).copied())
+            .ok_or_else(|| anyhow!("PROJECT_SIGNATURE missing elem"))?;
+        return Ok(("PROJECT_SIGNATURE".to_string(), json!({ "elem": elem })));
+    }
 
-  Err(anyhow!("unknown op: {}", s))
+    Err(anyhow!("unknown op: {}", s))
 }
 
 pub fn run_trace_and_write(
@@ -385,94 +418,126 @@ pub fn run_trace_and_write(
         let (op, args) = parse_op_to_semtrace(raw_op)?;
 
         let pre = StepPre {
-            set_digest: if step_idx == 0 && ((is_boolfun && boolfun_set.is_empty()) || (!is_boolfun && state_set.is_empty())) {
+            set_digest: if step_idx == 0
+                && ((is_boolfun && boolfun_set.is_empty()) || (!is_boolfun && state_set.is_empty()))
+            {
                 None
             } else {
                 Some(hex32(set_digest))
             },
-            count: if is_boolfun { boolfun_set.len() } else { state_set.len() },
+            count: if is_boolfun {
+                boolfun_set.len()
+            } else {
+                state_set.len()
+            },
             constraint_mask: cst.mask,
             constraint_value: cst.value,
         };
 
         match op.as_str() {
             "SELECT_UNIVERSE" => {
-                  let u = args.get("universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args for SELECT_UNIVERSE"))?;
-                  let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+                let u = args
+                    .get("universe")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("bad args for SELECT_UNIVERSE"))?;
+                let n = args.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
-                  let u_norm = u.to_ascii_uppercase();
+                let u_norm = u.to_ascii_uppercase();
 
-                  // BOOLFUN
-                  if is_boolfun_universe(u_norm.as_str()) {
-                      is_boolfun = true;
-                      is_ge = false;
-                      cst = Constraint::empty();
-                      state_set.clear();
-                      witness = None;
-
-                      boolfun_n = n;
-                      boolfun_all = build_boolfun(n);
-                      boolfun_set = boolfun_all.clone();
-                      boolfun_set.sort_by(boolfun_canonical_cmp);
-                      set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                      witness_bf = None;
-                  } else if u_norm == "QE" {
-                      // QE (fractions)
-                      is_boolfun = false;
-                      is_ge = false;
-                      cst = Constraint::empty();
-                      witness = None;
-                      witness_bf = None;
-
-                      state_set = qe.clone();
-                      set_digest = canonical_set_digest(&state_set);
-                  } else {
-                      return Err(anyhow!("unsupported universe: {}", u));
-                  }
-              }
-              "FILTER_WEIGHT" => {
+                // BOOLFUN
+                if is_boolfun_universe(u_norm.as_str()) {
+                    is_boolfun = true;
+                    is_ge = false;
+                    cst = Constraint::empty();
+                    state_set.clear();
+                    boolfun_n = n;
+                    boolfun_all = build_boolfun(n);
+                    boolfun_set = boolfun_all.clone();
+                    boolfun_set.sort_by(boolfun_canonical_cmp);
+                    set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                    witness = None;
+                    witness_bf = None;
+                } else if u_norm == "QE" {
+                    // QE (fractions)
+                    is_boolfun = false;
+                    is_ge = false;
+                    cst = Constraint::empty();
+                    state_set = qe.clone();
+                    set_digest = canonical_set_digest(&state_set);
+                    witness = None;
+                    witness_bf = None;
+                } else {
+                    return Err(anyhow!("unsupported universe: {}", u));
+                }
+            }
+            "FILTER_WEIGHT" => {
                 if !is_boolfun {
                     return Err(anyhow!("FILTER_WEIGHT requires BOOLFUN universe"));
                 }
-                let min = args.get("min").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args for FILTER_WEIGHT"))? as u32;
-                let max = args.get("max").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args for FILTER_WEIGHT"))? as u32;
-                let mut out: Vec<BoolFun> = boolfun_all.iter().copied().filter(|f| {
-                    let w = f.weight();
-                    w >= min && w <= max
-                }).collect();
+                let min = args
+                    .get("min")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| anyhow!("bad args for FILTER_WEIGHT"))?
+                    as u32;
+                let max = args
+                    .get("max")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| anyhow!("bad args for FILTER_WEIGHT"))?
+                    as u32;
+                let mut out: Vec<BoolFun> = boolfun_all
+                    .iter()
+                    .copied()
+                    .filter(|f| {
+                        let w = f.weight();
+                        w >= min && w <= max
+                    })
+                    .collect();
                 out.sort_by(boolfun_canonical_cmp);
                 boolfun_set = out;
                 set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                witness_bf = None;
             }
             "TOPK" => {
                 if !is_boolfun {
                     return Err(anyhow!("TOPK requires BOOLFUN universe"));
                 }
-                let target_s = args.get("target_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args for TOPK"))?;
-                let k = args.get("k").and_then(|v| v.as_u64()).ok_or_else(|| anyhow!("bad args for TOPK"))? as usize;
-                let target = parse_boolfun(target_s).ok_or_else(|| anyhow!("bad boolfun target"))?;
+                let target_s = args
+                    .get("target_elem")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("bad args for TOPK"))?;
+                let k = args
+                    .get("k")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| anyhow!("bad args for TOPK"))? as usize;
+                let target =
+                    parse_boolfun(target_s).ok_or_else(|| anyhow!("bad boolfun target"))?;
                 if boolfun_n == 0 {
                     boolfun_n = target.n;
                     boolfun_all = build_boolfun(boolfun_n);
                     boolfun_set = boolfun_all.clone();
                     boolfun_set.sort_by(boolfun_canonical_cmp);
-                    set_digest = canonical_set_digest_boolfun(&boolfun_set);
                 }
                 if target.n != boolfun_n {
-                    return Err(anyhow!("boolfun target n mismatch: have={} want={}", target.n, boolfun_n));
+                    return Err(anyhow!(
+                        "boolfun target n mismatch: have={} want={}",
+                        target.n,
+                        boolfun_n
+                    ));
                 }
 
-                let mut scored: Vec<(u32, BoolFun)> = boolfun_set.iter().copied().map(|f| (f.hamming(&target), f)).collect();
-                  scored.sort_by(|(da, fa), (db, fb)| {
-                      da.cmp(db).then_with(|| boolfun_canonical_cmp(fa, fb))
-                  });
-                  let take = k.min(scored.len());
-                  let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
-                  boolfun_set = top;
-                  boolfun_set.sort_by(boolfun_canonical_cmp);
+                let mut scored: Vec<(u32, BoolFun)> = boolfun_set
+                    .iter()
+                    .copied()
+                    .map(|f| (f.hamming(&target), f))
+                    .collect();
+                scored.sort_by(|(da, fa), (db, fb)| {
+                    da.cmp(db).then_with(|| boolfun_canonical_cmp(fa, fb))
+                });
+                let take = k.min(scored.len());
+                let top: Vec<BoolFun> = scored.into_iter().take(take).map(|(_, f)| f).collect();
+                boolfun_set = top;
+                boolfun_set.sort_by(boolfun_canonical_cmp);
                   set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                  witness_bf = boolfun_set.get(0).copied();
+                witness_bf = boolfun_set.get(0).copied();
             }
 
             "START_ELEM" => {
@@ -501,16 +566,16 @@ pub fn run_trace_and_write(
 
                     let mut tris = ge_state.clone();
                     tris.sort_by(crate::geom::canonical_cmp);
-                    let mut v: Vec<Frac> = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                    let mut v: Vec<Frac> = tris
+                        .into_iter()
+                        .map(|t| Frac { num: t.a, den: t.c })
+                        .collect();
                     v.sort_by(crate::qe::canonical_cmp);
                     state_set = v;
-
-                    set_digest = canonical_set_digest(&state_set);
                     witness = Some(Frac { num: a, den: c });
                 } else {
                     let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
                     state_set = qe.clone();
-                    set_digest = canonical_set_digest(&state_set);
                     witness = Some(f);
                 }
             }
@@ -533,14 +598,16 @@ pub fn run_trace_and_write(
                         .filter(|t| cst.matches(sig7_geom(t)))
                         .collect();
                     tris.sort_by(crate::geom::canonical_cmp);
-                    let mut v: Vec<Frac> = tris.into_iter().map(|t| Frac { num: t.a, den: t.c }).collect();
+                    let mut v: Vec<Frac> = tris
+                        .into_iter()
+                        .map(|t| Frac { num: t.a, den: t.c })
+                        .collect();
                     v.sort_by(crate::qe::canonical_cmp);
                     state_set = v;
                 } else {
                     state_set = filter_qe(&qe, cst);
+                    set_digest = canonical_set_digest(&state_set);
                 }
-
-                set_digest = canonical_set_digest(&state_set);
             }
             "WITNESS_NEAREST" => {
                 let target = args
@@ -576,76 +643,79 @@ pub fn run_trace_and_write(
                 let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
                 witness = Some(w);
             }
-              "PROJECT_SIGNATURE" => {
-                  let elem = args.get("elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("bad args for PROJECT_SIGNATURE"))?;
-                  let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
-                  let sig: u64 = (crate::semtrace::sig7(&f) as u64) & 0x7f;
+            "PROJECT_SIGNATURE" => {
+                let elem = args
+                    .get("elem")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("bad args for PROJECT_SIGNATURE"))?;
+                let f = parse_frac(elem).ok_or_else(|| anyhow!("bad frac elem"))?;
+                let sig: u64 = (crate::semtrace::sig7(&f) as u64) & 0x7f;
 
-                  // QE -> 7-bit signature -> BOOLFUN signature universe (n=7, bits in 0..127)
-                  is_boolfun = true;
-                  is_ge = false;
-                  cst = Constraint::empty();
-                  state_set.clear();
-                  witness = None;
+                // QE -> 7-bit signature -> BOOLFUN signature universe (n=7, bits in 0..127)
+                is_boolfun = true;
+                is_ge = false;
+                cst = Constraint::empty();
+                state_set.clear();
+                boolfun_n = 7;
+                boolfun_all = build_boolfun(7);
+                boolfun_set = boolfun_all.clone();
+                boolfun_set.sort_by(boolfun_canonical_cmp);
+                set_digest = canonical_set_digest_boolfun(&boolfun_set);
+                witness_bf = Some(BoolFun { n: 7, bits: sig });
+            }
+            "JOIN_NEAREST" => {
+                let metric = args
+                    .get("metric")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ABS_DIFF");
+                if metric != "ABS_DIFF" && metric != "HAMMING" {
+                    return Err(anyhow!("unsupported join metric: {}", metric));
+                }
 
-                  boolfun_n = 7;
-                  boolfun_all = build_boolfun(7);
-                  boolfun_set = boolfun_all.clone();
-                  boolfun_set.sort_by(boolfun_canonical_cmp);
-                  set_digest = canonical_set_digest_boolfun(&boolfun_set);
-                  witness_bf = Some(BoolFun { n: 7, bits: sig });
-              }
-              "JOIN_NEAREST" => {
-                  let metric = args.get("metric").and_then(|v| v.as_str()).unwrap_or("ABS_DIFF");
-                  if metric != "ABS_DIFF" && metric != "HAMMING" {
-                      return Err(anyhow!("unsupported join metric: {}", metric));
-                  }
+                let lu = args
+                    .get("left_universe")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe"))?;
+                let ru = args
+                    .get("right_universe")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe"))?;
+                let le = args
+                    .get("left_elem")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem"))?;
+                let re = args
+                    .get("right_elem")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem"))?;
 
-                  let lu = args.get("left_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_universe"))?;
-                  let ru = args.get("right_universe").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing right_universe"))?;
-                  let le = args.get("left_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing left_elem"))?;
-                  let re = args.get("right_elem").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("JOIN_NEAREST missing right_elem"))?;
+                let lu_norm = lu.to_ascii_uppercase();
+                let ru_norm = ru.to_ascii_uppercase();
 
-                  let lu_norm = lu.to_ascii_uppercase();
-                  let ru_norm = ru.to_ascii_uppercase();
+                if lu_norm == "QE" && is_boolfun_universe(ru_norm.as_str()) {
+                    let bf = parse_boolfun(re).ok_or_else(|| anyhow!("bad right_elem"))?;
+                    witness_bf = Some(bf);
+                    cst.mask = 0x7f;
+                    cst.value = (bf.bits as u8) & 0x7f;
 
-                  // v2: real cross-domain join (BOOLFUN -> QE constraint)
-                  // Interpret the right BOOLFUN element as a 7-bit signature filter over QE (mask=0x7f).
-                  // Then choose the nearest QE witness to left_elem inside that constrained QE set.
-                  if lu_norm == "QE" && is_boolfun_universe(ru_norm.as_str()) {
-                      // Seed QE if JOIN_NEAREST is the first op.
-                      if state_set.is_empty() {
-                          is_boolfun = false;
-                          is_ge = false;
-                          witness_bf = None;
-                          witness = None;
-                          cst = Constraint::empty();
-                          state_set = qe.clone();
-                          set_digest = canonical_set_digest(&state_set);
-                      }
+                    state_set = filter_qe(&qe, cst);
+                    set_digest = canonical_set_digest(&state_set);
 
-                      // Right side (BOOLFUN) -> QE signature constraint.
-                      let bf = parse_boolfun(re).ok_or_else(|| anyhow!("bad right_elem"))?;
-                      witness_bf = Some(bf);
-                      cst.mask = 0x7f;
-                      cst.value = (bf.bits as u8) & 0x7f;
+                    let t = parse_frac(le).ok_or_else(|| anyhow!("bad left_elem"))?;
+                    let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
+                    witness = Some(w);
+                } else {
+                    return Err(anyhow!(
+                        "JOIN_NEAREST unsupported join: left_universe={} right_universe={}",
+                        lu,
+                        ru
+                    ));
+                }
+            }
 
-                      state_set = filter_qe(&qe, cst);
-                      set_digest = canonical_set_digest(&state_set);
-
-                      // Left side (QE) -> witness within joined QE set.
-                      let t = parse_frac(le).ok_or_else(|| anyhow!("bad left_elem"))?;
-                      let w = witness_nearest(&state_set, &t).ok_or_else(|| anyhow!("empty set"))?;
-                      witness = Some(w);
-                  } else {
-                      return Err(anyhow!("JOIN_NEAREST unsupported join: left_universe={} right_universe={}", lu, ru));
-                  }
-              }
-              "RETURN_SET" => {
-                want_max_items = args
-                    .get("max_items")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20) as usize;
+            "RETURN_SET" => {
+                want_max_items =
+                    args.get("max_items").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
                 want_include_witness = args
                     .get("include_witness")
                     .and_then(|v| v.as_bool())
@@ -656,8 +726,16 @@ pub fn run_trace_and_write(
 
         let post = StepPost {
             set_digest: Some(hex32(set_digest)),
-            count: if is_boolfun { boolfun_set.len() } else { state_set.len() },
-            witness: if is_boolfun { witness_bf.as_ref().map(boolfun_to_string) } else { witness.as_ref().map(frac_to_string) },
+            count: if is_boolfun {
+                boolfun_set.len()
+            } else {
+                state_set.len()
+            },
+            witness: if is_boolfun {
+                witness_bf.as_ref().map(boolfun_to_string)
+            } else {
+                witness.as_ref().map(frac_to_string)
+            },
         };
 
         let sd = step_digest(&chain, &op, &args, &set_digest);
@@ -686,7 +764,11 @@ pub fn run_trace_and_write(
     });
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
 
-    let witness_s = if is_boolfun { witness_bf.as_ref().map(boolfun_to_string) } else { witness.as_ref().map(frac_to_string) };
+    let witness_s = if is_boolfun {
+        witness_bf.as_ref().map(boolfun_to_string)
+    } else {
+        witness.as_ref().map(frac_to_string)
+    };
 
     let mut sample: Vec<String> = Vec::new();
 
@@ -701,9 +783,13 @@ pub fn run_trace_and_write(
     if is_boolfun {
         let mut pushed = 0usize;
         for f in boolfun_set.iter() {
-            if pushed >= remain { break; }
+            if pushed >= remain {
+                break;
+            }
             if let Some(w) = witness_bf.as_ref() {
-                if *f == *w { continue; }
+                if *f == *w {
+                    continue;
+                }
             }
             sample.push(boolfun_to_string(f));
             pushed += 1;
@@ -711,16 +797,24 @@ pub fn run_trace_and_write(
     } else {
         let mut pushed = 0usize;
         for f in state_set.iter() {
-            if pushed >= remain { break; }
+            if pushed >= remain {
+                break;
+            }
             if let Some(w) = witness.as_ref() {
-                if *f == *w { continue; }
+                if *f == *w {
+                    continue;
+                }
             }
             sample.push(frac_to_string(f));
             pushed += 1;
         }
     }
 
-    let set_nonempty = if is_boolfun { !boolfun_set.is_empty() } else { !state_set.is_empty() };
+    let set_nonempty = if is_boolfun {
+        !boolfun_set.is_empty()
+    } else {
+        !state_set.is_empty()
+    };
     let verdict_ok = replay_ok;
     let result = json!({
         "verdict": if set_nonempty { "OK" } else { "EMPTY_SET" },
@@ -744,7 +838,10 @@ pub fn run_trace_and_write(
         "Semantic Transformer (exec)\nchain_hash={}\ncount={}\nwitness={}\n",
         hex32(chain),
         state_set.len(),
-        witness.as_ref().map(frac_to_string).unwrap_or_else(|| "(none)".to_string()),
+        witness
+            .as_ref()
+            .map(frac_to_string)
+            .unwrap_or_else(|| "(none)".to_string()),
     );
     fs::write(&paragraph_path, paragraph)?;
 
@@ -756,7 +853,11 @@ pub fn run_trace_and_write(
 
     Ok(ExecutionResult {
         valid: verdict_ok,
-        final_count: if is_boolfun { boolfun_set.len() } else { state_set.len() },
+        final_count: if is_boolfun {
+            boolfun_set.len()
+        } else {
+            state_set.len()
+        },
         witness: witness_s,
         artifacts_path: Some(artifacts_dir),
     })

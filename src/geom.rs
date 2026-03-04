@@ -15,9 +15,15 @@ impl Tri {
         }
 
         // sort a ≤ b ≤ c
-        if a > b { std::mem::swap(&mut a, &mut b); }
-        if b > c { std::mem::swap(&mut b, &mut c); }
-        if a > b { std::mem::swap(&mut a, &mut b); }
+        if a > b {
+            std::mem::swap(&mut a, &mut b);
+        }
+        if b > c {
+            std::mem::swap(&mut b, &mut c);
+        }
+        if a > b {
+            std::mem::swap(&mut a, &mut b);
+        }
 
         // triangle inequality
         if a + b <= c {
@@ -69,8 +75,12 @@ pub fn canonical_cmp(a: &Tri, b: &Tri) -> Ordering {
         return pa.cmp(&pb);
     }
 
-    if a.a != b.a { return a.a.cmp(&b.a); }
-    if a.b != b.b { return a.b.cmp(&b.b); }
+    if a.a != b.a {
+        return a.a.cmp(&b.a);
+    }
+    if a.b != b.b {
+        return a.b.cmp(&b.b);
+    }
     a.c.cmp(&b.c)
 }
 
@@ -95,9 +105,7 @@ pub fn build_ge(max_side: i32) -> Vec<Tri> {
 /// distance for witness (L1)
 #[allow(dead_code)]
 pub fn tri_distance(a: &Tri, b: &Tri) -> i64 {
-    ((a.a - b.a).abs()
-        + (a.b - b.b).abs()
-        + (a.c - b.c).abs()) as i64
+    ((a.a - b.a).abs() + (a.b - b.b).abs() + (a.c - b.c).abs()) as i64
 }
 
 /// helpers
@@ -107,7 +115,11 @@ fn gcd(mut a: i32, mut b: i32) -> i32 {
         a = b;
         b = r;
     }
-    if a == 0 { 1 } else { a.abs() }
+    if a == 0 {
+        1
+    } else {
+        a.abs()
+    }
 }
 
 fn gcd3(a: i32, b: i32, c: i32) -> i32 {

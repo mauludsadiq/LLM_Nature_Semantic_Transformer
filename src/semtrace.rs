@@ -12,24 +12,33 @@ pub struct Trace {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag="op")]
+#[serde(tag = "op")]
 pub enum Op {
-    #[serde(rename="START_ELEM")]
+    #[serde(rename = "START_ELEM")]
     StartElem { elem: String },
-    #[serde(rename="SET_BIT")]
+    #[serde(rename = "SET_BIT")]
     SetBit { i: u8, b: u8 },
-    #[serde(rename="SELECT_UNIVERSE")]
+    #[serde(rename = "SELECT_UNIVERSE")]
     SelectUniverse { universe: String, n: u8 },
-    #[serde(rename="FILTER_WEIGHT")]
+    #[serde(rename = "FILTER_WEIGHT")]
     FilterWeight { min: u32, max: u32 },
-    #[serde(rename="TOPK")]
+    #[serde(rename = "TOPK")]
     TopK { target_elem: String, k: usize },
-    #[serde(rename="WITNESS_NEAREST")]
+    #[serde(rename = "WITNESS_NEAREST")]
     WitnessNearest { target_elem: String, metric: String },
-    #[serde(rename="RETURN_SET")]
-    ReturnSet { max_items: usize, include_witness: bool },
-    #[serde(rename="JOIN_NEAREST")]
-    JoinNearest { left_universe: String, right_universe: String, left_elem: String, right_elem: String, metric: String },
+    #[serde(rename = "RETURN_SET")]
+    ReturnSet {
+        max_items: usize,
+        include_witness: bool,
+    },
+    #[serde(rename = "JOIN_NEAREST")]
+    JoinNearest {
+        left_universe: String,
+        right_universe: String,
+        left_elem: String,
+        right_elem: String,
+        metric: String,
+    },
 }
 
 #[allow(dead_code)]
@@ -49,23 +58,46 @@ pub fn demo_trace() -> Trace {
         universe: "QE".to_string(),
         bits: 7,
         ops: vec![
-            Op::StartElem { elem: "7/200".to_string() },
+            Op::StartElem {
+                elem: "7/200".to_string(),
+            },
             Op::SetBit { i: 2, b: 1 },
-            Op::WitnessNearest { target_elem: "7/200".to_string(), metric: "ABS_DIFF".to_string() },
-            Op::ReturnSet { max_items: 20, include_witness: true },
+            Op::WitnessNearest {
+                target_elem: "7/200".to_string(),
+                metric: "ABS_DIFF".to_string(),
+            },
+            Op::ReturnSet {
+                max_items: 20,
+                include_witness: true,
+            },
         ],
     }
 }
 
 /// For v0: map bit index to predicate meaning (QE fixed).
 pub fn bit_legend() -> [&'static str; 7] {
-    ["positive","rat_int","den<=6","num_even","den_mod3","proper","num_abs<=5"]
+    [
+        "positive",
+        "rat_int",
+        "den<=6",
+        "num_even",
+        "den_mod3",
+        "proper",
+        "num_abs<=5",
+    ]
 }
 
 pub fn bit_legend_geom() -> [&'static str; 7] {
-    ["perim<=20","isosceles","equilateral","primitive","right","acute","obtuse"]
+    [
+        "perim<=20",
+        "isosceles",
+        "equilateral",
+        "primitive",
+        "right",
+        "acute",
+        "obtuse",
+    ]
 }
-
 
 /// Compute signature bits for QE predicates.
 pub fn sig7(f: &Frac) -> u8 {
@@ -78,9 +110,19 @@ pub fn sig7(f: &Frac) -> u8 {
     let proper = f.num.abs() < f.den;
     let num_abs_le_5 = f.num.abs() <= 5;
 
-    let preds = [positive, integer, den_le_6, num_even, den_mod3, proper, num_abs_le_5];
+    let preds = [
+        positive,
+        integer,
+        den_le_6,
+        num_even,
+        den_mod3,
+        proper,
+        num_abs_le_5,
+    ];
     for (i, p) in preds.iter().enumerate() {
-        if *p { bits |= 1u8 << i; }
+        if *p {
+            bits |= 1u8 << i;
+        }
     }
     bits
 }
@@ -91,13 +133,13 @@ use crate::geom::Tri;
 pub fn sig7_geom(t: &Tri) -> u8 {
     let mut bits: u8 = 0;
 
-    let perimeter_le_20 = t.perimeter() <= 20;        // bit 0
-    let is_isosceles = t.is_isosceles();              // bit 1
-    let is_equilateral = t.is_equilateral();          // bit 2
-    let is_primitive = t.is_primitive();              // bit 3
+    let perimeter_le_20 = t.perimeter() <= 20; // bit 0
+    let is_isosceles = t.is_isosceles(); // bit 1
+    let is_equilateral = t.is_equilateral(); // bit 2
+    let is_primitive = t.is_primitive(); // bit 3
     let is_right = t.angle_type() == std::cmp::Ordering::Equal; // bit 4
     let is_acute = t.angle_type() == std::cmp::Ordering::Greater; // bit 5
-    let is_obtuse = t.angle_type() == std::cmp::Ordering::Less;   // bit 6
+    let is_obtuse = t.angle_type() == std::cmp::Ordering::Less; // bit 6
 
     let preds = [
         perimeter_le_20,
@@ -110,7 +152,9 @@ pub fn sig7_geom(t: &Tri) -> u8 {
     ];
 
     for (i, p) in preds.iter().enumerate() {
-        if *p { bits |= 1u8 << i; }
+        if *p {
+            bits |= 1u8 << i;
+        }
     }
 
     bits
@@ -124,11 +168,17 @@ pub struct Constraint {
 }
 
 impl Constraint {
-    pub fn empty() -> Self { Constraint { mask: 0, value: 0 } }
+    pub fn empty() -> Self {
+        Constraint { mask: 0, value: 0 }
+    }
     pub fn set_bit(mut self, i: u8, b: u8) -> Self {
         let bit = 1u8 << i;
         self.mask |= bit;
-        if b == 1 { self.value |= bit; } else { self.value &= !bit; }
+        if b == 1 {
+            self.value |= bit;
+        } else {
+            self.value &= !bit;
+        }
         self
     }
     pub fn matches(&self, sig: u8) -> bool {

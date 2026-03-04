@@ -21,7 +21,11 @@ pub fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
-            let right = if i + 1 < level.len() { level[i + 1] } else { level[i] };
+            let right = if i + 1 < level.len() {
+                level[i + 1]
+            } else {
+                level[i]
+            };
             let mut buf = [0u8; 64];
             buf[0..32].copy_from_slice(&left);
             buf[32..64].copy_from_slice(&right);

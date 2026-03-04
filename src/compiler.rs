@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
 use crate::semtrace::{Op, Trace};
+use anyhow::{anyhow, Result};
 
 #[derive(Clone, Debug)]
 pub struct Candidate {
@@ -10,7 +10,10 @@ pub struct Candidate {
 
 fn contains_positive_hint(s: &str) -> bool {
     let q = s.to_ascii_lowercase();
-    q.contains("positive") || q.contains("\u{2265}0") || q.contains(">=0") || q.contains("nonnegative")
+    q.contains("positive")
+        || q.contains("\u{2265}0")
+        || q.contains(">=0")
+        || q.contains("nonnegative")
 }
 
 fn contains_proper_hint(s: &str) -> bool {
@@ -45,10 +48,21 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
         if want_den_le_6 {
             base_ops.push(Op::SetBit { i: 2, b: 1 });
         }
-        base_ops.push(Op::WitnessNearest { target_elem: fr.clone(), metric: "ABS_DIFF".to_string() });
-        base_ops.push(Op::ReturnSet { max_items, include_witness });
+        base_ops.push(Op::WitnessNearest {
+            target_elem: fr.clone(),
+            metric: "ABS_DIFF".to_string(),
+        });
+        base_ops.push(Op::ReturnSet {
+            max_items,
+            include_witness,
+        });
 
-        let base = Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops: base_ops.clone() };
+        let base = Trace {
+            semtrace_version: "0.0.1".to_string(),
+            universe: "QE".to_string(),
+            bits: 7,
+            ops: base_ops.clone(),
+        };
 
         let mut out: Vec<Candidate> = Vec::new();
 
@@ -65,7 +79,12 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             // Insert SET_BIT after START_ELEM (bit 0 = positive)
             ops.insert(1, Op::SetBit { i: 0, b: 1 });
             out.push(Candidate {
-                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                trace: Trace {
+                    semtrace_version: "0.0.1".to_string(),
+                    universe: "QE".to_string(),
+                    bits: 7,
+                    ops,
+                },
                 score: 0.10,
                 rationale: "intent: prefer positive fractions (bit0=1)".to_string(),
             });
@@ -76,7 +95,12 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             let mut ops = base_ops.clone();
             ops.insert(1, Op::SetBit { i: 5, b: 1 }); // proper
             out.push(Candidate {
-                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                trace: Trace {
+                    semtrace_version: "0.0.1".to_string(),
+                    universe: "QE".to_string(),
+                    bits: 7,
+                    ops,
+                },
                 score: 0.15,
                 rationale: "intent: prefer proper fractions (bit5=1)".to_string(),
             });
@@ -87,7 +111,12 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             let mut ops = base_ops.clone();
             ops.insert(1, Op::SetBit { i: 6, b: 1 }); // num_abs<=5
             out.push(Candidate {
-                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                trace: Trace {
+                    semtrace_version: "0.0.1".to_string(),
+                    universe: "QE".to_string(),
+                    bits: 7,
+                    ops,
+                },
                 score: 0.20,
                 rationale: "intent: prefer small numerator magnitude (bit6=1)".to_string(),
             });
@@ -100,7 +129,12 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             ops.insert(1, Op::SetBit { i: 0, b: 1 });
             ops.insert(2, Op::SetBit { i: 5, b: 1 });
             out.push(Candidate {
-                trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "QE".to_string(), bits: 7, ops },
+                trace: Trace {
+                    semtrace_version: "0.0.1".to_string(),
+                    universe: "QE".to_string(),
+                    bits: 7,
+                    ops,
+                },
                 score: 0.25,
                 rationale: "intent: prefer positive + proper (bit0=1, bit5=1)".to_string(),
             });
@@ -120,9 +154,13 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             let start = pos + 2;
             let mut end = start;
             let b = ql.as_bytes();
-            while end < b.len() && b[end].is_ascii_digit() { end += 1; }
+            while end < b.len() && b[end].is_ascii_digit() {
+                end += 1;
+            }
             if end > start {
-                if let Ok(v) = ql[start..end].parse::<u8>() { n = Some(v); }
+                if let Ok(v) = ql[start..end].parse::<u8>() {
+                    n = Some(v);
+                }
             }
         }
 
@@ -130,42 +168,67 @@ pub fn compile_query_to_candidates(query: &str) -> Result<Vec<Candidate>> {
             let start = pos + "target=".len();
             let mut end = start;
             let b = q.as_bytes();
-            while end < b.len() && !b[end].is_ascii_whitespace() { end += 1; }
-            if end > start { target = Some(q[start..end].to_string()); }
+            while end < b.len() && !b[end].is_ascii_whitespace() {
+                end += 1;
+            }
+            if end > start {
+                target = Some(q[start..end].to_string());
+            }
         }
 
         if let Some(pos) = ql.find("k=") {
             let start = pos + 2;
             let mut end = start;
             let b = ql.as_bytes();
-            while end < b.len() && b[end].is_ascii_digit() { end += 1; }
+            while end < b.len() && b[end].is_ascii_digit() {
+                end += 1;
+            }
             if end > start {
-                if let Ok(v) = ql[start..end].parse::<usize>() { k = Some(v); }
+                if let Ok(v) = ql[start..end].parse::<usize>() {
+                    k = Some(v);
+                }
             }
         }
 
-        if k.is_none() { k = parse_max_items(q); }
+        if k.is_none() {
+            k = parse_max_items(q);
+        }
 
         let n = n.ok_or_else(|| anyhow!("BOOLFUN compile requires n=..."))?;
         let target = target.ok_or_else(|| anyhow!("BOOLFUN compile requires target=..."))?;
         let k = k.unwrap_or(10);
 
         let ops: Vec<Op> = vec![
-            Op::SelectUniverse { universe: "BOOLFUN".to_string(), n },
-            Op::TopK { target_elem: target, k },
-            Op::ReturnSet { max_items: k, include_witness: true },
+            Op::SelectUniverse {
+                universe: "BOOLFUN".to_string(),
+                n,
+            },
+            Op::TopK {
+                target_elem: target,
+                k,
+            },
+            Op::ReturnSet {
+                max_items: k,
+                include_witness: true,
+            },
         ];
 
         return Ok(vec![Candidate {
-            trace: Trace { semtrace_version: "0.0.1".to_string(), universe: "BOOLFUN".to_string(), bits: 7, ops },
+            trace: Trace {
+                semtrace_version: "0.0.1".to_string(),
+                universe: "BOOLFUN".to_string(),
+                bits: 7,
+                ops,
+            },
             score: 0.0,
             rationale: "literal: BOOLFUN requires explicit n and target".to_string(),
         }]);
     }
 
-    Err(anyhow!("unable to deterministically compile query; provide explicit JSON ops"))
+    Err(anyhow!(
+        "unable to deterministically compile query; provide explicit JSON ops"
+    ))
 }
-
 
 fn first_frac(s: &str) -> Option<String> {
     // deterministic, no regex dependency: scan for digit+/digit+
@@ -286,7 +349,9 @@ pub fn compile_query_to_trace(query: &str) -> Result<Trace> {
 
     // JOIN_NEAREST explicit op
     if q.to_ascii_uppercase().contains("JOIN_NEAREST") {
-        return Err(anyhow!("JOIN_NEAREST requires explicit JSON ops; not supported in NL compiler yet"));
+        return Err(anyhow!(
+            "JOIN_NEAREST requires explicit JSON ops; not supported in NL compiler yet"
+        ));
     }
 
     // QE (fractions) path: requires a fraction seed.
@@ -393,7 +458,10 @@ pub fn compile_query_to_trace(query: &str) -> Result<Trace> {
                 universe: "BOOLFUN".to_string(),
                 n,
             },
-            Op::TopK { target_elem: target, k },
+            Op::TopK {
+                target_elem: target,
+                k,
+            },
             Op::ReturnSet {
                 max_items: k,
                 include_witness: true,
@@ -419,10 +487,8 @@ mod tests {
 
     #[test]
     fn compile_qe_den_le_6() {
-        let t = compile_query_to_trace(
-            "Find fractions similar to 7/200 but with denominator <= 6",
-        )
-        .unwrap();
+        let t = compile_query_to_trace("Find fractions similar to 7/200 but with denominator <= 6")
+            .unwrap();
         assert_eq!(t.universe, "QE");
         assert_eq!(t.bits, 7);
         assert!(matches!(t.ops[0], Op::StartElem { .. }));
@@ -432,7 +498,10 @@ mod tests {
             .iter()
             .any(|op| matches!(op, Op::SetBit { i: 2, b: 1 })));
         // must include WitnessNearest
-        assert!(t.ops.iter().any(|op| matches!(op, Op::WitnessNearest { .. })));
+        assert!(t
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::WitnessNearest { .. })));
         // must end with ReturnSet
         assert!(matches!(t.ops.last().unwrap(), Op::ReturnSet { .. }));
     }
@@ -461,7 +530,9 @@ mod tests {
 
     #[test]
     fn compile_boolfun_requires_n_and_target() {
-        let e = compile_query_to_trace("boolfun target=0xBEEF").err().unwrap();
+        let e = compile_query_to_trace("boolfun target=0xBEEF")
+            .err()
+            .unwrap();
         let msg = format!("{e}");
         assert!(msg.contains("n="));
         let e = compile_query_to_trace("boolfun n=4").err().unwrap();
@@ -483,10 +554,10 @@ mod tests {
         )));
     }
 
-  #[test]
-  fn compile_join_nearest_rejected() {
-      let e = compile_query_to_trace("JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF").err().unwrap();
-      let msg = format!("{e}");
-      assert!(msg.contains("JOIN_NEAREST"));
-  }
+    #[test]
+    fn compile_join_nearest_rejected() {
+        let e = compile_query_to_trace("JOIN_NEAREST left_universe=QE right_universe=BOOLFUN left_elem=7/200 right_elem=0xBEEF metric=ABS_DIFF").err().unwrap();
+        let msg = format!("{e}");
+        assert!(msg.contains("JOIN_NEAREST"));
+    }
 }
