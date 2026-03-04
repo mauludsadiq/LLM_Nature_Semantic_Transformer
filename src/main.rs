@@ -46,7 +46,7 @@ fn main() -> Result<()> {
                 }
             }
             let matching = qe.iter().filter(|f| cst.matches(sig7(f))).count() as f64;
-            c.score = 1.0 - (matching / universe_size);
+            c.score = matching / universe_size;
         }
         cands.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
 
@@ -266,44 +266,62 @@ fn main() -> Result<()> {
         // Treat the input as a space-separated op script (already explicit, no NL compiler).
         (split_explicit_ops(qtrim), None)
     } else {
-        // Deterministic, auditable compiler for a small NL subset (no ML proposer)
-        let t = llm_nature_semantic_transformer::compiler::compile_query_to_trace(&cli.query)?;
-        let mut out: Vec<String> = Vec::with_capacity(t.ops.len());
-        for op in t.ops.iter() {
+        // Multi-candidate compiler: generate ranked candidates, execute top by selectivity
+        use llm_nature_semantic_transformer::semtrace::{Constraint, Op, sig7};
+        use llm_nature_semantic_transformer::qe::build_qe;
+
+        let mut cands = llm_nature_semantic_transformer::compiler::compile_query_to_candidates(&cli.query)?;
+        if cands.is_empty() {
+            return Err(anyhow!("unable to compile query; provide explicit JSON ops"));
+        }
+
+        // Score by selectivity: 1.0 - (matching / universe_size)
+        let qe_score = build_qe();
+        let universe_size = qe_score.len() as f64;
+        for c in cands.iter_mut() {
+            let mut cst = Constraint::empty();
+            for op in &c.trace.ops {
+                if let Op::SetBit { i, b } = op {
+                    cst = cst.set_bit(*i, *b);
+                }
+            }
+            let matching = qe_score.iter().filter(|f| cst.matches(sig7(f))).count() as f64;
+            c.score = matching / universe_size;
+        }
+        cands.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+
+        // Execute top candidate
+        let top = &cands[0];
+        if cli.verbose {
+            let matching = ((1.0 - top.score) * universe_size) as usize;
+            println!("Selected candidate: {} (score={:.4}, {}/{}, {})",
+                top.rationale, top.score, matching, qe_score.len(), top.rationale);
+        }
+
+        let mut out: Vec<String> = Vec::with_capacity(top.trace.ops.len());
+        for op in top.trace.ops.iter() {
             match op {
-                llm_nature_semantic_transformer::semtrace::Op::StartElem { elem } => {
+                Op::StartElem { elem } => {
                     out.push(format!("LOAD {}", elem));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::SetBit { i, b } => {
+                Op::SetBit { i, b } => {
                     out.push(format!("MASK_BIT bit={} val={}", i, b));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::SelectUniverse { universe, n } => {
+                Op::SelectUniverse { universe, n } => {
                     out.push(format!("SELECT_UNIVERSE universe={} n={}", universe, n));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::FilterWeight { min, max } => {
+                Op::FilterWeight { min, max } => {
                     out.push(format!("FILTER_WEIGHT min={} max={}", min, max));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::TopK { target_elem, k } => {
+                Op::TopK { target_elem, k } => {
                     out.push(format!("TOPK target_elem={} k={}", target_elem, k));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::WitnessNearest {
-                    target_elem,
-                    metric,
-                } => {
-                    out.push(format!(
-                        "WITNESS_NEAREST target_elem={} metric={}",
-                        target_elem, metric
-                    ));
+                Op::WitnessNearest { target_elem, metric } => {
+                    out.push(format!("WITNESS_NEAREST target_elem={} metric={}", target_elem, metric));
                 }
-                llm_nature_semantic_transformer::semtrace::Op::ReturnSet {
-                    max_items,
-                    include_witness,
-                } => {
-                    out.push(format!(
-                        "RETURN_SET max_items={} include_witness={}",
-                        max_items,
-                        if *include_witness { 1 } else { 0 }
-                    ));
+                Op::ReturnSet { max_items, include_witness } => {
+                    out.push(format!("RETURN_SET max_items={} include_witness={}",
+                        max_items, if *include_witness { 1 } else { 0 }));
                 }
                 _ => unreachable!("unhandled Op variant in NL compiler path")
             }
@@ -313,7 +331,7 @@ fn main() -> Result<()> {
         let trace_dir = PathBuf::from("traces");
         fs::create_dir_all(&trace_dir)?;
         let trace_path = trace_dir.join("compiled_input.json");
-        fs::write(&trace_path, serde_json::to_string_pretty(&t)?)?;
+        fs::write(&trace_path, serde_json::to_string_pretty(&top.trace)?)?;
 
         (out, Some(trace_path))
     };

@@ -384,8 +384,9 @@ pub fn run_trace_and_write(
     let start = Instant::now();
 
     // Artifacts dir
-    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%SZ").to_string();
-    let artifacts_dir = PathBuf::from("runs").join(timestamp);
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S%.6fZ").to_string();
+    let thread_id = format!("{:?}", std::thread::current().id()).replace("ThreadId(", "").replace(")", "");
+    let artifacts_dir = PathBuf::from("runs").join(format!("{}_{}", timestamp, thread_id));
     fs::create_dir_all(&artifacts_dir)?;
 
     let trace_ndjson_path = artifacts_dir.join("trace.ndjson");
