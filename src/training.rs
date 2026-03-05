@@ -93,7 +93,8 @@ impl NdjsonRecord {
     }
 
     pub fn to_features(&self) -> [f32; FEATURE_DIM] {
-        FeatureEncoder::encode_raw(
+        let is_terminal = self.op_kind == "ACCEPT" || self.op_kind == "REJECT";
+        FeatureEncoder::encode_raw_full(
             self.active_layer,
             self.step_count,
             self.rejection_count,
@@ -102,6 +103,8 @@ impl NdjsonRecord {
             &self.chain_hash,
             self.tau,
             self.top_k,
+            self.block_idx,
+            is_terminal,
         )
     }
 }

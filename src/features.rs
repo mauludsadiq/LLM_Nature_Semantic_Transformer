@@ -25,7 +25,7 @@
 use crate::layer::LayerId;
 use crate::proposer::{ProposerContext, OpKind};
 
-pub const FEATURE_DIM: usize = 32;
+pub const FEATURE_DIM: usize = 34;
 
 // ── LayerId one-hot indices ───────────────────────────────────────────────────
 
@@ -146,6 +146,25 @@ impl FeatureEncoder {
         tau:              f64,
         top_k:            usize,
     ) -> [f32; FEATURE_DIM] {
+        Self::encode_raw_full(
+            active_layer, step_count, rejection_count,
+            pass_present, witness_present, chain_hash,
+            tau, top_k, step_count, false,
+        )
+    }
+
+    pub fn encode_raw_full(
+        active_layer:     LayerId,
+        step_count:       usize,
+        rejection_count:  usize,
+        pass_present:     bool,
+        witness_present:  bool,
+        chain_hash:       &[u8; 32],
+        tau:              f64,
+        top_k:            usize,
+        block_idx:        usize,
+        is_terminal:      bool,
+    ) -> [f32; FEATURE_DIM] {
         let mut v = [0.0f32; FEATURE_DIM];
 
         v[layer_index(active_layer)] = 1.0;
@@ -156,6 +175,8 @@ impl FeatureEncoder {
         for i in 0..16 { v[11 + i] = chain_hash[i] as f32 / 255.0; }
         v[27 + tau_bin(tau)] = 1.0;
         v[31] = (top_k as f32 / 10.0).min(1.0);
+        v[32] = (block_idx as f32 / 12.0).min(1.0);
+        v[33] = if is_terminal { 1.0 } else { 0.0 };
 
         v
     }
