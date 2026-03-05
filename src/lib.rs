@@ -24,3 +24,4 @@ pub mod tower;
 pub mod corpus;
 pub mod features;
 pub mod training;
+pub mod onnx_proposer;
