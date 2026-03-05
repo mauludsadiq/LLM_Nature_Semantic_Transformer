@@ -210,7 +210,7 @@ def save_model(model: ProposerModel, path: str):
 
 
 def load_model(path: str) -> ProposerModel:
-    ckpt = torch.load(path, map_location="cpu")
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model = ProposerModel(
         input_dim  = ckpt["input_dim"],
         hidden_dim = ckpt["hidden_dim"],
