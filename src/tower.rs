@@ -37,6 +37,7 @@ use crate::proposer::{
     ProposerContext, RuleBasedProposer, ProposerTrainer,
     TraceRecord, OpKind,
 };
+use crate::onnx_proposer::OnnxProposer;
 
 // ── TowerManifest ─────────────────────────────────────────────────────────────
 
@@ -365,6 +366,65 @@ impl Tower {
             }
         }
         trainer
+    }
+
+
+    /// Collect a verified trace corpus using the ONNX learned proposer.
+    /// Drop-in replacement for collect_trace_corpus() — same output format,
+    /// neural weights navigating the tower instead of hard-coded rules.
+    pub fn collect_trace_corpus_onnx(
+        &self,
+        n_phonemes: usize,
+        tau:        f64,
+        top_k:      usize,
+        model_path: &str,
+    ) -> Result<ProposerTrainer, String> {
+        let mut proposer = OnnxProposer::new(model_path)
+            .map_err(|e| format!("failed to load ONNX model: {e}"))?;
+        let mut trainer = ProposerTrainer::new();
+        let n = self.phoneme.len().min(n_phonemes);
+
+        for ph_idx in 0..n {
+            let mut ctx       = ProposerContext::new(LayerId::Phoneme);
+            let mut block_idx = 0usize;
+
+            for _ in 0..12 {
+                let dist = proposer.propose(&ctx, block_idx, tau, top_k)
+                    .map_err(|e| format!("ONNX propose failed at block {block_idx}: {e}"))?;
+                let top_op = match dist.top() {
+                    Some(op) => op.clone(),
+                    None     => break,
+                };
+
+                if top_op.kind.is_terminal() {
+                    trainer.record(TraceRecord {
+                        context:      ctx.clone(),
+                        accepted_op:  top_op,
+                        distribution: dist,
+                        step_digest:  sha256_bytes(b"terminal"),
+                        first_try:    true,
+                    });
+                    break;
+                }
+
+                let step_digest = sha256_bytes(
+                    &[ctx.chain_hash.as_slice(), &ph_idx.to_le_bytes()].concat()
+                );
+                let next_layer = top_op.tgt_layer.unwrap_or(ctx.active_layer);
+
+                trainer.record(TraceRecord {
+                    context:      ctx.clone(),
+                    accepted_op:  top_op,
+                    distribution: dist,
+                    step_digest,
+                    first_try:    true,
+                });
+
+                ctx.advance(&step_digest, next_layer);
+                block_idx += 1;
+            }
+        }
+        Ok(trainer)
     }
 
     /// Verify the tower's internal consistency.
