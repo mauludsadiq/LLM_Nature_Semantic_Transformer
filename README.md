@@ -1,221 +1,91 @@
-# LLM Nature — Semantic Transformer
+LLM Nature — Semantic Transformer
 
 ## Grounded Proposer / Executor / Verifier over a Certified 7-Layer Linguistic Universe
 
------
+---
 
 ## What this is
 
 This repository implements the **Semantic Transformer pivot**: a system in which a language model is not a probabilistic truth-teller but a probabilistic **Proposer** of *execution traces* through a **certified finite semantic universe**. Truth is decided only by deterministic execution and cryptographic replay verification.
 
-In standard transformers, “reasoning” is next-token mimicry: the model emits a plausible continuation of text. That architecture has a structural failure mode — **hallucination** — because there is no grounded model that must be satisfied. This repo builds that grounded model.
+In standard transformers, "reasoning" is next-token mimicry: the model emits a plausible continuation of text. That architecture has a structural failure mode — **hallucination** — because there is no grounded model that must be satisfied. This repo builds that grounded model.
 
 The architecture has three roles:
 
-|Role        |What it does                                                           |
-|------------|-----------------------------------------------------------------------|
-|**Proposer**|Generates a candidate semtrace (ops sequence)                          |
-|**Executor**|Runs the trace deterministically; produces a witness and a digest chain|
-|**Verifier**|Replays the trace independently; certifies or rejects                  |
+| Role | What it does |
+|---|---|
+| **Proposer** | Generates a candidate op sequence (semtrace) through the tower |
+| **Executor** | Runs the trace deterministically; produces a witness and a digest chain |
+| **Verifier** | Replays the trace independently; certifies or rejects |
 
-A trace is accepted only when `Executor` and `Verifier` agree on every step digest. No floating point is used for ordering or distance. All identity is structural.
+A trace is accepted only when Executor and Verifier agree on every step digest. No floating point is used for ordering or distance. All identity is structural.
 
------
+---
 
-## 9-Stage Scaling Architecture
+## Two-phase architecture
 
-The system was built in 9 stages, each adding a certified component:
+The system was built in two phases:
 
-| Stage | Module            | What it provides                                         |
-|-------|-------------------|----------------------------------------------------------|
-| 0     | `layer.rs`        | Unified `Layer` trait over all 7 universes               |
-| 1     | `sig_index.rs`    | Certified inverted index; O(sigs) WITNESS_NEAREST        |
-| 2     | all layer modules | Canonical `render()` on all 7 layers                     |
-| 3     | `edges.rs`        | 6 certified cross-layer projection edges                 |
-| 4     | `attention.rs`    | CertifiedAttention: softmax over Hamming distances       |
-| 5     | `feedforward.rs`  | TowerFFN: feed-forward as certified graph traversal      |
-| 6     | `layer.rs`        | TowerPosition: structural positional encoding            |
-| 7     | `transformer.rs`  | TowerTransformer: block assembly, chained digest pass    |
-| 8     | `proposer.rs`     | Probabilistic proposer with binary verifier reward       |
-| 9     | `tower.rs`        | Unified content-addressed artifact with `root_digest`    |
+**Phase 1 — Certified Tower (Stages 0–9, Rust)**
+Build the 7-layer linguistic universe with cryptographic identity, certified attention/FFN/transformer blocks, and a rule-based proposer.
 
------
+**Phase 2 — Learned Proposer (Stages 10–17, Rust + Python)**
+Train a neural proposer on verified tower traces via imitation learning, RL fine-tuning, and process supervision. Export to ONNX for deployment.
 
-## The Tower: 7 Certified Linguistic Universes
+---
 
-Language is modelled as a tower of finite, typed, digest-locked universes. Each layer depends on the one below it. Every element in every layer has a canonical byte encoding, a 16-bit structural signature, and a SHA-256 digest. The universe digest is a Merkle root over all element digests, bound to the layer’s validation rules.
+## Phase 1: The Certified Tower
+
+### 9-Stage build sequence
+
+| Stage | Module | What it provides |
+|---|---|---|
+| 0 | `layer.rs` | Unified `Layer` trait over all 7 universes |
+| 1 | `sig_index.rs` | Certified inverted index; O(sigs) WITNESS_NEAREST |
+| 2 | all layer modules | Canonical `render()` on all 7 layers |
+| 3 | `edges.rs` | 6 certified cross-layer projection edges |
+| 4 | `attention.rs` | CertifiedAttention: softmax over Hamming distances |
+| 5 | `feedforward.rs` | TowerFFN: feed-forward as certified graph traversal |
+| 6 | `layer.rs` | TowerPosition: structural positional encoding |
+| 7 | `transformer.rs` | TowerTransformer: block assembly, chained digest pass |
+| 8 | `proposer.rs` | RuleBasedProposer with binary verifier reward |
+| 9 | `tower.rs` | Unified content-addressed artifact with `root_digest` |
+
+### The 7 certified linguistic universes
 
 ```
-Layer 7  DISCOURSE   5 certified graphs     16-bit sig
+Layer 7  DISCOURSE   5 certified graphs       16-bit sig
            ↑ depends on
-Layer 6  SEMANTIC    6 certified graphs     16-bit sig
+Layer 6  SEMANTIC    6 certified graphs       16-bit sig
            ↑ depends on
 Layer 5  PHRASE      5 certified parse trees  16-bit sig
            ↑ depends on
-Layer 4  WORD        34,487 words             8-bit sig   (CMU + WordNet)
+Layer 4  WORD        34,487 words              8-bit sig   (CMU + WordNet)
            ↑ depends on
-Layer 3  MORPHEME    16 morphemes            16-bit sig
+Layer 3  MORPHEME    16 morphemes             16-bit sig
            ↑ depends on
-Layer 2  SYLLABLE    ~423,000 syllables      16-bit sig
+Layer 2  SYLLABLE    ~423,000 syllables       16-bit sig
            ↑ depends on
-Layer 1  PHONEME     44 phonemes             12-bit sig
+Layer 1  PHONEME     44 phonemes              12-bit sig
 ```
 
-### Layer 1 — PHONEME
+Each element in every layer has: a canonical byte encoding, a structural signature (8–16 bits), and a SHA-256 digest. The universe digest is a Merkle root over all element digests, bound to the layer's validation rules. A change to any element, rule, or signature bit propagates immediately to the universe digest and breaks all downstream traces.
 
-44 English phonemes. Each phoneme has a 12-bit signature encoding manner, place, voicing, and vowel features. Universe digest is a Merkle root over all phoneme digests, bound to the IPA feature schema.
+**PHONEME** — 44 English phonemes. 12-bit signature encodes manner, place, voicing, and vowel features.
 
-### Layer 2 — SYLLABLE
+**SYLLABLE** — ~423,000 valid English syllables generated by the phonotactic validator. Enforces the Sonority Sequencing Principle with S-extrasyllabic exemption. 16-bit signature encodes onset complexity, nucleus type, coda complexity, stress.
 
-~423,000 valid English syllables generated by the phonotactic validator. Syllables are (onset, nucleus, coda) triples over phonemes. The validator enforces the Sonority Sequencing Principle with an exemption for S-extrasyllabic onsets. 16-bit signature encodes onset complexity, nucleus type, coda complexity, and stress features.
+**MORPHEME** — 16 certified morphemes with full allomorphy. Identity is `meaning_id`, not surface form: `/kæts/` and `/dɒgz/` share the same plural morpheme.
 
-### Layer 3 — MORPHEME
+**WORD** — 34,487 words from CMU Pronouncing Dictionary + WordNet. Nearest-word queries use exact integer Hamming distance over 8-bit signatures.
 
-16 certified morphemes covering the core English morphological inventory:
+**PHRASE** — 5 certified parse trees over a typed grammar (S → NP VP, etc.). Identity is tree structure, not word tokens. Validation enforces head-complement constraints.
 
-- Free morphemes: `CAT`, `DOG`, `RUN`, `WALK`, `HAPPY`, `UN-`
-- Bound morphemes with allomorphy:
-  - Plural `-s` → `/s/`, `/z/`, `/ɪz/` (by final consonant voicing/sibilance)
-  - Past `-ed` → `/t/`, `/d/`, `/ɪd/` (by final consonant voicing)
-  - Indefinite article `a/an` (by following onset)
-  - Negation prefix `in-/im-/il-/ir-` (by place assimilation)
+**SEMANTIC** — 6 certified directed labeled graphs. Active and passive voice collapse to the same canonical graph ("The cat chased the mouse" ≡ "The mouse was chased by the cat"). Single-root constraint, typed edge validation, max 64 nodes / 128 edges.
 
-Identity is `meaning_id`, not surface form. `/kæts/` and `/dɒgz/` share the same plural morpheme.
+**DISCOURSE** — 5 certified graphs over semantic graph sequences. Temporal order edges are acyclic (DFS-enforced). Unresolvable ambiguity becomes `TruthStatus::Unknown` — not an open interpretation. Max 512 nodes / 1024 edges.
 
-### Layer 4 — WORD
-
-34,487 English words sourced from CMU Pronouncing Dictionary and WordNet. Each word has a canonical phonemic transcription, a part-of-speech tag, and an 8-bit signature. Nearest-word queries use Hamming distance over signatures.
-
-### Layer 5 — PHRASE
-
-5 certified parse trees over the grammar:
-
-```
-S  → NP VP
-NP → Det N | N | Det Adj N | NP PP
-VP → V | V NP | V NP PP | V PP
-PP → P NP
-AP → Adj | Adj AP
-```
-
-Each tree node is typed (`S`, `NP`, `VP`, `PP`, `AP`, `N`, `V`, `Det`, `Adj`, `P`). Validation enforces head-complement constraints. Identity is tree structure, not word tokens. 16-bit signature encodes node-type presence, depth, and branching.
-
-### Layer 6 — SEMANTIC
-
-6 certified directed labeled graphs. Nodes are typed concepts (`Entity`, `Event`, `Attribute`, `Quantity`, `Location`, `Time`). Edges are semantic relations (`Agent`, `Patient`, `Theme`, `Recipient`, `Location`, `Time`, `Manner`, `Cause`, `Possessor`, `Modifier`).
-
-**Core principle:** meaning identity is graph structure, not surface form. Active and passive voice collapse to the same canonical graph:
-
-> “The cat chased the mouse” ≡ “The mouse was chased by the cat”
-
-Validation enforces: unique node IDs, typed edge constraints (agent/patient require Event→Entity), exactly one root event (single-root constraint), `max_nodes=64`, `max_edges=128`. Polarity (positive/negative) and tense (past/present/future) are graph-level features. 16-bit signature encodes relation presence, entity count, event count, polarity, and tense.
-
-### Layer 7 — DISCOURSE
-
-5 certified directed graphs over sequences of semantic graphs. Nodes are typed discourse units (`SemanticGraphRef`, `CoreferenceChain`, `UnknownReferent`). Edges are discourse relations (`Coreference`, `Causation`, `TemporalOrder`, `Contrast`, `Elaboration`, `Entailment`, `Background`, `Unknown`).
-
-**Key constraints:**
-
-- Temporal order edges must be **acyclic** (enforced by DFS cycle detection)
-- Self-loops are forbidden
-- Ambiguity that cannot be resolved becomes a `TruthStatus::Unknown` node — not an open interpretation
-- `max_nodes=512`, `max_edges=1024`
-
-16-bit signature encodes relation presence, graph count, coreference chain presence, negation, and resolved-ambiguity status.
-
------
-
-## The Semtrace Protocol
-
-Queries are expressed as **semtrace op sequences**. Each op is deterministic. Each step produces a `StepRec` with:
-
-- `pre`: set digest and count before the op
-- `post`: set digest, count, and witness after the op
-- `step_digest`: SHA-256 of `(chain, op, args, set_digest)` — cryptographic linkage
-
-The full trace is written as NDJSON. The verifier replays every step independently and checks that all step digests agree.
-
-### Supported ops
-
-|Op                                                |Description                                       |
-|--------------------------------------------------|--------------------------------------------------|
-|`SELECT_UNIVERSE universe=X`                      |Load and activate universe X                      |
-|`WITNESS_NEAREST target_elem=Y metric=HAMMING_SIG`|Find nearest element by signature Hamming distance|
-|`FILTER_WEIGHT min=A max=B`                       |Filter BoolFun universe by Hamming weight         |
-|`TOPK target_elem=Y k=N`                          |Keep top-K nearest elements                       |
-|`START_ELEM elem=E`                               |Set starting element and witness                  |
-|`SET_BIT i=N b=B`                                 |Apply bit constraint to current set               |
-|`PROJECT_SIGNATURE elem=E`                        |Project QE element to BoolFun signature universe  |
-|`JOIN_NEAREST`                                    |Cross-universe nearest join                       |
-|`RETURN_SET max_items=N include_witness=1`        |Emit result sample                                |
-
-### Universe identifiers
-
-|Universe   |Aliases                      |
-|-----------|-----------------------------|
-|`PHONEME`  |`PH`, `PHONE`                |
-|`SYLLABLE` |`SYL`, `SYLLABLE`            |
-|`MORPHEME` |`MORPH`, `MORPHEME`          |
-|`WORD`     |`WORD`, `EN`                 |
-|`PHRASE`   |`PHRASE`, `PHR`              |
-|`SEMANTIC` |`SEMANTIC`, `SEM`, `SEMGRAPH`|
-|`DISCOURSE`|`DISCOURSE`, `DIS`, `DISC`   |
-|`BOOLFUN`  |`BF`, `BOOLFUN`              |
-|`QE`       |`QE` (rational numbers)      |
-
------
-
-## Usage
-
-```bash
-# Build
-cargo build --release
-
-# Run a query
-cargo run -- 'SELECT_UNIVERSE universe=SEMANTIC; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
-
-# Run all layers
-cargo run -- 'SELECT_UNIVERSE universe=WORD; WITNESS_NEAREST target_elem=abandon metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
-cargo run -- 'SELECT_UNIVERSE universe=PHRASE; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=5 include_witness=1'
-cargo run -- 'SELECT_UNIVERSE universe=DISCOURSE; WITNESS_NEAREST target_elem=1 metric=HAMMING_SIG; RETURN_SET max_items=3 include_witness=1'
-
-# Verify a trace
-cargo run -- verify --trace runs/<TIMESTAMP>/trace.ndjson
-
-# Run tests
-cargo test
-```
-
------
-
-## Test suite
-
-266 tests across all 7 layers and the executor/verifier pipeline.
-
-|Module        |Tests|Coverage                                                      |
-|--------------|-----|--------------------------------------------------------------|
-|`phoneme`     |✓    |inventory, signatures, digests, Layer trait                   |
-|`syllable`    |✓    |phonotactics, validator, signatures, Layer trait              |
-|`morpheme`    |✓    |allomorphy, meaning_id identity, signatures, Layer trait      |
-|`word`        |✓    |CMU+WordNet inventory, nearest-word, Layer trait              |
-|`phrase`      |✓    |grammar validator, parse trees, signatures, Layer trait       |
-|`semantic`    |✓    |graph validation, paraphrase invariance, signatures, Layer trait|
-|`discourse`   |✓    |temporal acyclicity, coreference, typed unknown, Layer trait  |
-|`layer`       |✓    |LayerId, TowerPosition, LayerWitness, TowerContext            |
-|`sig_index`   |✓    |certified inverted index, posting digests, tamper detection   |
-|`edges`       |✓    |6 certified cross-layer projection edges, edge digests        |
-|`attention`   |✓    |CertifiedAttention, softmax, log-sum-exp, indexed variant     |
-|`feedforward` |✓    |TowerFFN, cross-layer projection, full upward pass            |
-|`transformer` |✓    |TowerTransformer, chained block digest, forward pass          |
-|`proposer`    |✓    |OpDistribution, RuleBasedProposer, TraceRecord, corpus digest |
-|`tower`       |✓    |unified artifact, root_digest, query, verify, trace corpus    |
-|`exec`        |✓    |PROJECT_SIGNATURE roundtrip, WORD nearest, new universes      |
-
------
-
-## Cryptographic spine
-
-Every layer’s universe digest is computed as:
+### Cryptographic spine
 
 ```
 universe_digest = SHA-256(
@@ -226,94 +96,244 @@ universe_digest = SHA-256(
 )
 ```
 
-A change to any element, any validation rule, or any signature bit definition propagates to the universe digest and breaks all downstream traces that depend on it. This makes the system tamper-evident by construction.
+### Transformer architecture comparison
 
------
+> Standard transformer: weights store the world. This system: tower stores the world. Weights learn to navigate it.
+
+| Component | Standard transformer | This system |
+|---|---|---|
+| Attention | Learned QKV over token embeds | CertifiedAttention: softmax over Hamming distances |
+| Feed-forward | `max(0, xW₁+b₁)W₂+b₂` | TowerFFN: certified cross-layer projection |
+| Positional encoding | Sinusoidal / learned | TowerPosition: layer depth + sequence + sig |
+| Output | Distribution over tokens | Distribution over certified semtrace ops |
+| Verifier | None | Deterministic; rejects uncertified outputs |
+
+---
+
+## Phase 2: The Learned Proposer
+
+### 8-Stage training pipeline
+
+| Stage | What it does | Gate |
+|---|---|---|
+| 10 | Op vocabulary expansion — 8-op canonical sequence, corpus v2 (4259 records) | entropy > 2.0 bits |
+| 11 | FeatureEncoder — 25-dim feature vectors, block_idx one-hot | all values in [0,1] |
+| 12 | Training data format — `features.bin`, `labels.bin`, `splits.json` | imbalance < 100× |
+| 13 | Model definition — ProposerModel (7440 params), IL training | val_acc ≥ 0.90 |
+| 14 | ONNX export — `model.onnx` (88KB), 12/12 positions verified | 12/12 correct |
+| 15 | Verifier-in-loop eval — ONNX inference via onnxruntime | acceptance ≥ 85% |
+| 16 | RL fine-tuning — REINFORCE + KL penalty, no regression | clean acc ≥ 95% |
+| 17 | Process supervision — step-level rewards, curriculum noise | step_acc ≥ 0.95 |
+
+All gates passed. Final model: 1.000 step_acc and pass_acc on clean and noisy inputs.
+
+### Feature encoding (25 dimensions)
+
+```
+[0..11]   block_idx one-hot       — position in the 12-op canonical sequence
+[12..18]  active_layer one-hot    — which of the 7 tower layers is active
+[19]      step_count / 20.0       — normalized step count
+[20..23]  tau bin one-hot         — [≤0.5, ≤1.0, ≤2.0, 4.0+]
+[24]      top_k / 10.0            — normalized top-k
+```
+
+The dominant signal is `block_idx`: each op has a fixed position in the canonical sequence, so the model learns the tower's execution protocol directly.
+
+### Canonical op sequence (one pass)
+
+| block_idx | Op | Active layer |
+|---|---|---|
+| 0 | SELECT_UNIVERSE | PHONEME |
+| 1 | WITNESS_NEAREST | PHONEME |
+| 2 | ATTEND | PHONEME |
+| 3 | FFN_STEP | PHONEME → SYLLABLE |
+| 4 | FFN_STEP | SYLLABLE → MORPHEME |
+| 5 | FFN_STEP | MORPHEME → WORD |
+| 6 | FFN_STEP | WORD → PHRASE |
+| 7 | FFN_STEP | PHRASE → SEMANTIC |
+| 8 | FFN_STEP | SEMANTIC → DISCOURSE |
+| 9 | PROJECT_LAYER | DISCOURSE |
+| 10 | RETURN_SET | DISCOURSE |
+| 11 | ACCEPT | DISCOURSE |
+
+### Training pipeline
+
+**Imitation learning** — `gen_training_data` generates verified traces from the rule-based proposer. The 25-dim feature matrix is written to `training_data/features.bin` (f32 little-endian) and labels to `training_data/labels.bin` (u8 pairs).
+
+**RL fine-tuning** — REINFORCE with KL penalty vs. the frozen IL model. Updates only on OOD examples where the model errs. Conservative lr=5e-5 prevents catastrophic forgetting.
+
+**Process supervision** — Step-level rewards replace sparse terminal reward. Each op gets immediate feedback: +1.0 correct, −0.5 wrong, +2.0 terminal bonus, −1.0 terminal penalty. Curriculum noise increases from 0 → 0.15 over 10 epochs.
+
+### Model files
+
+| File | Description |
+|---|---|
+| `train/model_v2.pt` | IL-trained PyTorch checkpoint (7440 params) |
+| `train/model_rl.pt` | After REINFORCE fine-tuning |
+| `train/model_ps.pt` | After process supervision (final) |
+| `train/model.onnx` | ONNX export (88KB), ready for `ort` |
+
+---
 
 ## Repo layout
 
 ```
 src/
-  phoneme.rs      Layer 1: 44 phonemes, 12-bit sig
-  syllable.rs     Layer 2: ~423K syllables, phonotactic validator
-  morpheme.rs     Layer 3: 16 morphemes, allomorphy, meaning_id identity
-  word.rs         Layer 4: 34,487 words, CMU+WordNet
-  phrase.rs       Layer 5: grammar validator, parse trees
-  semantic.rs     Layer 6: meaning graphs, paraphrase invariance
-  discourse.rs    Layer 7: knowledge graphs, temporal order, coreference
-  layer.rs        Layer trait: unified interface over all 7 universes
-  sig_index.rs    Certified signature inverted index (O(sigs) WITNESS_NEAREST)
-  edges.rs        6 certified cross-layer projection edges with project/invert
-  attention.rs    CertifiedAttention: softmax over Hamming distances
-  feedforward.rs  TowerFFN: feed-forward as certified cross-layer projection
-  transformer.rs  TowerTransformer: block assembly, chained digest forward pass
-  proposer.rs     Probabilistic proposer: OpDistribution, RuleBasedProposer, TraceRecord
-  tower.rs        Unified Tower artifact: content-addressed, root_digest, full verify
-  exec.rs         Executor: semtrace op runner, all universes
-  verify.rs       Verifier: independent trace replay
-  compiler.rs     NL query → semtrace ops compiler
-  semtrace.rs     Step digest, constraint, sig7
-  digest.rs       SHA-256, Merkle root
-  boolfun.rs      Boolean function universe
-  qe.rs           Rational number universe
-  geom.rs         Geometric universe
-  main.rs         CLI entry point
-runs/             Timestamped execution artifacts (trace.ndjson, proof.json, result.json)
+  phoneme.rs        Layer 1: 44 phonemes, 12-bit sig
+  syllable.rs       Layer 2: ~423K syllables, phonotactic validator
+  morpheme.rs       Layer 3: 16 morphemes, allomorphy, meaning_id identity
+  word.rs           Layer 4: 34,487 words, CMU+WordNet
+  phrase.rs         Layer 5: grammar validator, parse trees
+  semantic.rs       Layer 6: meaning graphs, paraphrase invariance
+  discourse.rs      Layer 7: knowledge graphs, temporal order, coreference
+  layer.rs          Layer trait: unified interface + TowerPosition
+  sig_index.rs      Certified signature inverted index
+  edges.rs          6 certified cross-layer projection edges
+  attention.rs      CertifiedAttention: softmax over Hamming distances
+  feedforward.rs    TowerFFN: certified cross-layer projection
+  transformer.rs    TowerTransformer: chained digest forward pass
+  proposer.rs       OpDistribution, RuleBasedProposer, ProposerContext
+  corpus.rs         Corpus v2: 8-op vocabulary, OpSequence, CorpusCollector
+  features.rs       FeatureEncoder: 25-dim deterministic feature vectors
+  training.rs       NdjsonRecord parser, DataSplit, TrainingDataWriter
+  tower.rs          Unified Tower artifact: root_digest, query, verify
+  exec.rs           Executor: semtrace op runner
+  verify.rs         Verifier: independent trace replay
+  digest.rs         SHA-256, Merkle root
+  compiler.rs       NL query → semtrace ops compiler
+  semtrace.rs       Step digest, constraint, sig7
+  boolfun.rs        Boolean function universe
+  qe.rs             Rational number universe
+  geom.rs           Geometric universe
+  main.rs           CLI entry point
+  bin/
+    gen_training_data.rs   Generate features.bin + labels.bin from corpus
+    eval_proposer.rs       Verifier-in-loop evaluation harness
+
+train/
+  model.py              ProposerModel definition (PyTorch)
+  train.py              IL training loop
+  eval.py               ONNX evaluation via onnxruntime
+  export.py             PyTorch → ONNX export with verification
+  rl_train.py           REINFORCE fine-tuning
+  process_supervision.py Step-level reward training
+  model_v2.pt           IL checkpoint
+  model_rl.pt           RL checkpoint
+  model_ps.pt           Process supervision checkpoint (final)
+  model.onnx            ONNX export (88KB)
+
+training_data/
+  features.bin          [N × 25] f32 little-endian feature matrix
+  labels.bin            [N × 2] u8 (op_class, tgt_class) pairs
+  splits.json           train/val/test indices + class weights
+  manifest.json         digest, shape, imbalance metadata
+
+corpus_v2.ndjson        4259 verified trace records (NDJSON)
 ```
 
------
+---
 
-## Transformer architecture
+## Test suite
 
-This system is a recognizable transformer — it has attention, feed-forward, positional encoding, and a learned proposer. The difference is structural:
+317 tests, all passing.
 
-> Standard transformer: weights store the world. This system: tower stores the world. Weights learn to navigate it.
+| Module | Coverage |
+|---|---|
+| `phoneme` | inventory, signatures, digests, Layer trait |
+| `syllable` | phonotactics, validator, signatures, Layer trait |
+| `morpheme` | allomorphy, meaning_id identity, signatures, Layer trait |
+| `word` | CMU+WordNet inventory, nearest-word, Layer trait |
+| `phrase` | grammar validator, parse trees, signatures, Layer trait |
+| `semantic` | graph validation, paraphrase invariance, signatures |
+| `discourse` | temporal acyclicity, coreference, typed unknown |
+| `sig_index` | certified inverted index, posting digests, tamper detection |
+| `edges` | 6 certified cross-layer projection edges |
+| `attention` | CertifiedAttention, softmax, log-sum-exp |
+| `feedforward` | TowerFFN, cross-layer projection, full upward pass |
+| `transformer` | TowerTransformer, chained block digest |
+| `proposer` | OpDistribution, RuleBasedProposer, TraceRecord |
+| `corpus` | Op entropy gate, op sequence, NDJSON serialization |
+| `features` | FeatureEncoder, feature bounds, determinism |
+| `training` | NdjsonRecord parser, DataSplit, binary format |
+| `tower` | root_digest, query, verify, trace corpus |
 
-| Component          | Standard transformer          | This system                                      |
-|--------------------|-------------------------------|--------------------------------------------------|
-| Attention          | Learned QKV over token embeds | CertifiedAttention: softmax over Hamming distances |
-| Feed-forward       | `max(0, xW₁+b₁)W₂+b₂`       | TowerFFN: certified cross-layer projection        |
-| Positional encoding| Sinusoidal / learned          | TowerPosition: layer depth + sequence + sig       |
-| Output             | Distribution over tokens      | Distribution over certified semtrace ops          |
-| Verifier           | None                          | Deterministic; rejects uncertified outputs        |
+---
 
-### Proposer training (3 stages)
+## Usage
 
-1. **Imitation** — `Tower::collect_trace_corpus()` generates verified traces via `RuleBasedProposer`. Train on these via supervised learning.
-2. **RL from verifier** — Binary reward: trace verifies = +1, fails = 0. No reward hacking (verifier is deterministic over certified universes).
-3. **Process supervision** — Reward each step digest in the chain, not just the final output.
+```bash
+# Build
+cargo build --release
 
-Practical integration options:
+# Run tests
+cargo test
 
-- Export a small transformer to ONNX and call it from Rust via `ort`
-- Run a Python proposer in a separate process and pipe proposed ops into `cargo run -- exec`
-- Fine-tune GPT-2 on the verified trace corpus produced by `collect_trace_corpus`
+# Generate training corpus
+cargo run --release --bin gen_training_data
 
-The repo ships `RuleBasedProposer` (`src/proposer.rs`) so the full pipeline can be validated without external model files.
+# Evaluate proposer
+cargo run --release --bin eval_proposer
 
------
+# Train learned proposer (Python)
+source train/.venv/bin/activate
+python3 train/train.py \
+    --features training_data/features.bin \
+    --labels   training_data/labels.bin \
+    --splits   training_data/splits.json \
+    --out      train/model_v2.pt
+
+# Export to ONNX
+python3 train/export.py --model train/model_v2.pt --out train/model.onnx
+
+# Evaluate ONNX model
+python3 train/eval.py \
+    --model    train/model.onnx \
+    --features training_data/features.bin \
+    --labels   training_data/labels.bin \
+    --splits   training_data/splits.json
+
+# RL fine-tuning
+python3 train/rl_train.py --model train/model_v2.pt --out train/model_rl.pt
+
+# Process supervision
+python3 train/process_supervision.py --model train/model_rl.pt --out train/model_ps.pt
+```
+
+---
 
 ## Notes on determinism
 
-- No floating point is used for ordering or distance
+- No floating point is used for ordering or distance in the tower
 - Nearest-witness selection uses exact integer Hamming distance over 16-bit signatures
-- Rational distance uses cross-multiplication: `|a/b − c/d| = |ad − bc| / (bd)`
 - Canonical byte encodings sort keys lexicographically — identical structure produces identical bytes on any platform
+- Feature vectors are fully deterministic: same context → same 25-dim vector on any platform
+- ONNX model is platform-independent; inference results are reproducible
 
------
+---
 
 ## Dependencies
 
-|Crate                 |Purpose             |
-|----------------------|--------------------|
-|`serde` / `serde_json`|Trace serialization |
-|`sha2`                |SHA-256 digests     |
-|`anyhow`              |Error handling      |
-|`chrono`              |Trace timestamps    |
-|`clap`                |CLI argument parsing|
-|`regex`               |NL compiler patterns|
+**Rust**
 
------
+| Crate | Purpose |
+|---|---|
+| `serde` / `serde_json` | Trace serialization |
+| `sha2` | SHA-256 digests |
+| `anyhow` | Error handling |
+| `chrono` | Trace timestamps |
+| `hex` | Digest display |
+
+**Python**
+
+| Package | Purpose |
+|---|---|
+| `torch` | Model training |
+| `onnx` | ONNX graph format |
+| `onnxruntime` | ONNX inference |
+| `numpy` | Feature matrix I/O |
+
+---
 
 ## License
+
 MUI
