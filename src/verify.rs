@@ -129,6 +129,7 @@ fn witness_nearest(set: &[Frac], target: &Frac) -> Option<Frac> {
     Some(best)
 }
 
+#[allow(unused_assignments)]
 pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let qe = build_qe();
     let ge_state = crate::geom::build_ge(20);
@@ -148,6 +149,7 @@ pub fn verify_trace_ndjson(trace_path: &Path) -> Result<bool> {
     let mut word_all: Vec<Word> = Vec::new();
     let mut word_set: Vec<Word> = Vec::new();
     let mut is_word: bool = false;
+    #[allow(unused_assignments)]
     let mut witness_word: Option<Word> = None;
     let mut syllable_all: Vec<Syllable> = Vec::new();
     let mut syllable_set: Vec<Syllable> = Vec::new();

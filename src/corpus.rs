@@ -18,14 +18,9 @@ use std::io::Write;
 use crate::digest::{sha256_bytes, merkle_root};
 use crate::layer::{Layer, LayerId};
 use crate::tower::Tower;
-use crate::proposer::{
-    ProposerContext, ProposerTrainer, TraceRecord,
-    RuleBasedProposer, OpKind, ProposedOp, OpDistribution,
-};
+use crate::proposer::{ProposerContext, OpKind};
 use crate::transformer::TowerTransformer;
 use crate::attention::CertifiedAttention;
-use crate::feedforward::TowerFFN;
-use crate::sig_index::SigIndex;
 
 // ── CorpusConfig ──────────────────────────────────────────────────────────────
 

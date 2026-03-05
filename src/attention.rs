@@ -23,7 +23,7 @@
 //! places for trace stability across platforms.
 
 use crate::digest::sha256_bytes;
-use crate::layer::{Layer, LayerId, TowerPosition};
+use crate::layer::{Layer, LayerId};
 use crate::sig_index::SigIndex;
 
 // ── AttentionWeight ───────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ impl CertifiedAttention {
         assert!(top_k > 0, "top_k must be positive");
 
         // Compute per-sig scores
-        let mut sig_scores: Vec<(u16, f64, u32)> = index.map.keys()
+        let sig_scores: Vec<(u16, f64, u32)> = index.map.keys()
             .map(|&sig| {
                 let d = (sig ^ query_sig).count_ones();
                 let score = -(d as f64) / tau;

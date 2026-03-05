@@ -11,10 +11,8 @@
 //! Stage 12 gate: max class imbalance < 100× (FFN_STEP structurally dominates: 6 per pass vs 1 REJECT per 10)
 
 use std::io::{Write, BufRead};
-use std::collections::HashMap;
-use crate::features::{FeatureEncoder, FeatureMatrix, FEATURE_DIM, layer_index, op_index};
+use crate::features::{FeatureEncoder, FeatureMatrix, FEATURE_DIM};
 use crate::layer::LayerId;
-use crate::proposer::OpKind;
 use crate::digest::sha256_bytes;
 
 // ── NdjsonRecord ──────────────────────────────────────────────────────────────

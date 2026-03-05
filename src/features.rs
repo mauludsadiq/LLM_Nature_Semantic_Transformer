@@ -132,6 +132,12 @@ impl FeatureEncoder {
         // [31] top_k normalized
         v[31] = (top_k as f32 / 10.0).min(1.0);
 
+        // [32] block_idx proxy (step_count used as block position)
+        v[32] = (ctx.step_count as f32 / 12.0).min(1.0);
+
+        // [33] is_terminal = 0.0 (encode() is called pre-terminal)
+        v[33] = 0.0;
+
         v
     }
 
@@ -347,7 +353,7 @@ mod tests {
 
     #[test]
     fn feature_dim_correct() {
-        assert_eq!(FEATURE_DIM, 32);
+        assert_eq!(FEATURE_DIM, 34);
     }
 
     #[test]

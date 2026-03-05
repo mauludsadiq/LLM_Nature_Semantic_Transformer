@@ -1,3 +1,4 @@
+#![allow(unused_variables, unused_imports)]
 //! Verifier-in-the-loop evaluation — Stage 15.
 //!
 //! Runs the learned proposer (via ONNX feature encoding) against the live
@@ -17,14 +18,10 @@
 //! The ONNX path is exercised via Python (train/eval.py).
 
 use llm_nature_semantic_transformer::tower::Tower;
-use llm_nature_semantic_transformer::corpus::{CorpusCollector, CorpusConfig};
 use llm_nature_semantic_transformer::proposer::{
     RuleBasedProposer, ProposerContext, OpKind,
 };
-use llm_nature_semantic_transformer::features::{
-    FeatureEncoder, FEATURE_DIM, op_index, layer_index,
-};
-use llm_nature_semantic_transformer::transformer::TowerTransformer;
+use llm_nature_semantic_transformer::features::{FeatureEncoder, FEATURE_DIM, op_index};
 use llm_nature_semantic_transformer::layer::{Layer, LayerId};
 
 // ── EvalMetrics ───────────────────────────────────────────────────────────────
@@ -128,7 +125,7 @@ impl EvalMetrics {
 
 /// The canonical op sequence for a pass — ground truth for evaluation.
 fn ground_truth_ops(block_idx: usize) -> (OpKind, Option<LayerId>) {
-    let layers = [
+    let _layers = [
         LayerId::Syllable, LayerId::Morpheme, LayerId::Word,
         LayerId::Phrase, LayerId::Semantic, LayerId::Discourse,
     ];
@@ -241,6 +238,7 @@ fn print_comparison(rule_metrics: &EvalMetrics) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+#[allow(unused_variables)]
 fn main() {
     println!("Building tower...");
     let tower = Tower::build();

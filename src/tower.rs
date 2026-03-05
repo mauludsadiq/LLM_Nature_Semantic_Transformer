@@ -32,10 +32,10 @@ use crate::semantic::SemanticLayer;
 use crate::discourse::DiscourseLayer;
 use crate::sig_index::SigIndex;
 use crate::edges::tower_edge_digest;
-use crate::transformer::{TowerTransformer, ForwardPass, BlockConfig};
+use crate::transformer::{TowerTransformer, ForwardPass};
 use crate::proposer::{
     ProposerContext, RuleBasedProposer, ProposerTrainer,
-    TraceRecord, OpKind,
+    TraceRecord,
 };
 use crate::onnx_proposer::OnnxProposer;
 
@@ -319,8 +319,8 @@ impl Tower {
     pub fn collect_trace_corpus(
         &self,
         n_phonemes: usize,
-        tau:        f64,
-        top_k:      usize,
+        _tau:       f64,
+        _top_k:     usize,
     ) -> ProposerTrainer {
         let mut trainer = ProposerTrainer::new();
         let n = self.phoneme.len().min(n_phonemes);

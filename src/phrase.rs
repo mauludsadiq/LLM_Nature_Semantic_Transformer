@@ -264,7 +264,7 @@ pub fn sig16(phrase: &Phrase) -> u16 {
 
     let is_s   = phrase.root.node_type() == NodeType::S;
     let has_np = types.contains(&NodeType::NP);
-    let has_vp = types.contains(&NodeType::VP);
+    let _has_vp = types.contains(&NodeType::VP);
     let has_pp = types.contains(&NodeType::PP);
     let has_ap = types.contains(&NodeType::AP);
     let has_advp = types.contains(&NodeType::AdvP);

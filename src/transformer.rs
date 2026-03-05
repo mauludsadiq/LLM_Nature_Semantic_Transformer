@@ -21,7 +21,6 @@ use crate::digest::sha256_bytes;
 use crate::layer::{Layer, LayerId};
 use crate::attention::{CertifiedAttention, AttentionResult};
 use crate::feedforward::{TowerFFN, FFNStep};
-use crate::edges::EdgeId;
 
 // ── BlockConfig ───────────────────────────────────────────────────────────────
 

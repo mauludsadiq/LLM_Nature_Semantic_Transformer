@@ -173,7 +173,7 @@ pub struct OpDistribution {
 }
 
 impl OpDistribution {
-    pub fn from_ops(mut ops: Vec<ProposedOp>) -> Self {
+    pub fn from_ops(ops: Vec<ProposedOp>) -> Self {
         if ops.is_empty() {
             return OpDistribution { ops: vec![], weights: vec![] };
         }
