@@ -187,3 +187,26 @@ Every trace produced by `tower query` can be independently certified by `tower v
 ## License
 
 MIT
+
+---
+
+## Platform notes
+
+**Apple Silicon (M1/M2/M3):** builds out of the box.
+
+**Intel Mac (x86_64):** ONNX Runtime prebuilt binaries are not available for this target.
+Install ORT via Homebrew first, then set ORT_DYLIB_PATH before building:
+
+    brew install onnxruntime
+    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+    cargo build --release
+
+To make it permanent:
+
+    echo 'export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib' >> ~/.zshrc
+
+**Linux x86_64:** download a prebuilt release from
+https://github.com/microsoft/onnxruntime/releases, extract it, then:
+
+    export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
+    cargo build --release
