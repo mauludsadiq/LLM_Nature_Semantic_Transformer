@@ -61,9 +61,9 @@ fn layer_idx(layer: LayerId) -> usize {
 
 fn encode_features(ctx: &ProposerContext, block_idx: usize, tau: f64, top_k: usize) -> Vec<f32> {
     let mut x = vec![0.0f32; 25];
-    if block_idx < 12 { x[block_idx] = 1.0; }
+    x[block_idx % 12] = 1.0; // mod-12: maps extended sequences onto canonical positions
     x[12 + layer_idx(ctx.active_layer)] = 1.0;
-    x[19] = (ctx.step_count as f32 / 20.0).min(1.0);
+    x[19] = (ctx.step_count as f32 / 60.0).min(1.0);
     x[20 + tau_bin(tau)] = 1.0;
     x[24] = (top_k as f32 / 10.0).min(1.0);
     x
