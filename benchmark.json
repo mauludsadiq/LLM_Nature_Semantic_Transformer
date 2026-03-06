@@ -1,0 +1,64 @@
+{
+  "accuracy": {
+    "correct": 528,
+    "eval_ms": 86182,
+    "pct": 100.0,
+    "total": 528
+  },
+  "adversarial": {
+    "proposer_clean_pct": 100.0,
+    "verifier_soundness": "9/9"
+  },
+  "corpus": {
+    "v3_records": 17230,
+    "v4_records": 18730
+  },
+  "forward_pass_verification": {
+    "total": 44,
+    "verified": 44
+  },
+  "noise_robustness": [
+    {
+      "accuracy": 1.0,
+      "noise": 0.0
+    },
+    {
+      "accuracy": 0.9833333333333333,
+      "noise": 0.05
+    },
+    {
+      "accuracy": 0.95,
+      "noise": 0.1
+    },
+    {
+      "accuracy": 0.9166666666666666,
+      "noise": 0.15
+    },
+    {
+      "accuracy": 0.9166666666666666,
+      "noise": 0.2
+    },
+    {
+      "accuracy": 0.8333333333333334,
+      "noise": 0.3
+    }
+  ],
+  "proposer": {
+    "fdim": 25,
+    "hidden": 128,
+    "model": "train/model_v3.onnx",
+    "model_size_kb": 86,
+    "n_params": 21904
+  },
+  "tests": {
+    "failed": 0,
+    "passed": 322,
+    "total": 322
+  },
+  "timestamp": "2026-03-06 05:40:48Z",
+  "tower": {
+    "build_ms": 17366,
+    "n_phonemes": 44,
+    "root": "06d344512ff8de62c1b6b0cbefa1d31e5778a69e76f69ac55375a8632142bae4"
+  }
+}
